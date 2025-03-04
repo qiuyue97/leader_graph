@@ -168,6 +168,9 @@ class DataProcessor:
         """
         logger.info(f"生产者 {producer_id} 开始处理 {len(tasks)} 个任务")
 
+        # 当前使用的代理和使用计数
+        current_proxy = None
+
         for task in tasks:
             if self.stop_event.is_set():
                 logger.info(f"生产者 {producer_id} 收到停止信号，退出")
@@ -176,12 +179,29 @@ class DataProcessor:
             try:
                 logger.info(f"生产者 {producer_id} 处理任务: {task.idx}, URL: {task.url}")
 
+                # 检查是否需要获取新代理
+                if self.proxy_pool and (current_proxy is None or current_proxy.get('_usage_count', 0) >= 10):
+                    # 获取新代理
+                    current_proxy = self.proxy_pool.get_proxy()
+                    logger.info(f"生产者 {producer_id} 获取了新代理")
+
+                # 如果使用代理池但获取不到代理，跳过此任务
+                if self.proxy_pool and not current_proxy:
+                    logger.warning(f"生产者 {producer_id} 无法获取代理，跳过任务 {task.idx}")
+                    continue
+
+                # 更新代理使用计数
+                if current_proxy:
+                    current_proxy['_usage_count'] = current_proxy.get('_usage_count', 0) + 1
+                    logger.debug(f"生产者 {producer_id} 代理使用计数: {current_proxy['_usage_count']}")
+
                 # 获取页面内容
                 fetch_result = self.scraper.fetch_with_metadata(
                     url=task.url,
                     person_name=task.person_name,
                     person_id=task.person_id,
-                    use_mobile=True
+                    use_mobile=True,
+                    provided_proxy=current_proxy  # 传递当前代理
                 )
 
                 if fetch_result["success"]:
@@ -204,6 +224,11 @@ class DataProcessor:
                 else:
                     error_msg = fetch_result.get("error", "未知错误")
                     logger.warning(f"生产者 {producer_id} 获取页面失败: {task.idx}, 错误: {error_msg}")
+
+                    # 如果获取失败且使用了代理，可以考虑废弃此代理
+                    if current_proxy and fetch_result.get("proxy_error", False):
+                        logger.warning(f"生产者 {producer_id} 废弃可能失效的代理")
+                        current_proxy = None
 
                     # 放入空结果
                     result = {
@@ -236,7 +261,7 @@ class DataProcessor:
                         progress = (self.processed_count / self.total_count) * 100
                         elapsed = time.time() - self.start_time
                         remaining = (elapsed / self.processed_count) * (
-                                    self.total_count - self.processed_count) if self.processed_count > 0 else 0
+                                self.total_count - self.processed_count) if self.processed_count > 0 else 0
                         logger.info(
                             f"进度: {self.processed_count}/{self.total_count} ({progress:.2f}%), 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
 

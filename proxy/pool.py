@@ -24,10 +24,8 @@ class ProxyPool:
             min_proxies: Minimum number of proxies to maintain in the pool
         """
         self.proxies = []
-        self.current_proxy_index = 0
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)
-        self.proxy_usage = {}
         self.proxy_providers = proxy_providers if isinstance(proxy_providers, list) else [proxy_providers]
         self.refresh_interval = refresh_interval
         self.min_proxies = min_proxies
@@ -40,7 +38,7 @@ class ProxyPool:
 
     def get_proxy(self) -> Optional[Dict[str, str]]:
         """
-        Get a proxy from the pool
+        Get a proxy from the pool and remove it
 
         Returns:
             A proxy dict or None if no proxies are available
@@ -60,29 +58,10 @@ class ProxyPool:
             proxy = self.proxies.pop()
             logger.info(f"获取并移除一个代理，剩余 {len(self.proxies)} 个代理")
 
-            # 如果代理数量低于最小阈值，尝试触发刷新
-            if len(self.proxies) < self.min_proxies:
-                threading.Thread(target=self._refresh_proxies, daemon=True).start()
+            # 初始化代理使用计数
+            proxy['_usage_count'] = 0
 
             return proxy
-
-    def return_proxy(self, proxy: Dict[str, str], mark_as_failed: bool = False) -> None:
-        """
-        Return a proxy to the pool or discard it if marked as failed
-
-        Args:
-            proxy: Proxy dict to return
-            mark_as_failed: If True, the proxy will be discarded
-        """
-        if not proxy:
-            return
-
-        with self.lock:
-            if not mark_as_failed:
-                self.proxies.append(proxy)
-                logger.debug(f"代理返回到池中，当前数量: {len(self.proxies)}")
-            else:
-                logger.info(f"代理被标记为失败，不返回到池中")
 
     def get_proxy_count(self) -> int:
         """返回当前可用代理数量"""
