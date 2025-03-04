@@ -1,5 +1,4 @@
 import os
-import logging
 import random
 import time
 from typing import Dict, Optional, Any
@@ -9,7 +8,8 @@ from .selenium_scraper import SeleniumScraper
 from proxy.pool import ProxyPool
 
 # 获取日志器
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 class BaikeScraper:

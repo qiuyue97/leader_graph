@@ -74,6 +74,8 @@ class DataProcessor:
         self.total_count = 0
         self.success_count = 0
         self.failure_count = 0
+        self.retry_count = 0
+        self.max_retries = 3
         self.start_time = None
 
         # 确保输出目录存在
@@ -161,6 +163,7 @@ class DataProcessor:
     def producer(self, producer_id: int, tasks: List[ProcessorTask]):
         """
         生产者函数，负责爬取数据并将结果放入队列
+        失败的任务不会被丢弃，而是将其放回队列末尾重试
 
         Args:
             producer_id: 生产者ID
@@ -171,24 +174,39 @@ class DataProcessor:
         # 当前使用的代理和使用计数
         current_proxy = None
 
-        for task in tasks:
-            if self.stop_event.is_set():
-                logger.info(f"生产者 {producer_id} 收到停止信号，退出")
-                break
+        # 创建一个任务队列，包含初始任务和失败后重新加入的任务
+        task_queue = list(tasks)
+
+        # 记录任务重试次数
+        retry_counts = {}
+        max_retries = 3  # 每个任务最大重试次数
+
+        while task_queue and not self.stop_event.is_set():
+            # 从队列头部获取任务
+            task = task_queue.pop(0)
+            task_id = f"{task.person_id}_{task.idx}"
+
+            # 初始化重试计数
+            if task_id not in retry_counts:
+                retry_counts[task_id] = 0
 
             try:
-                logger.info(f"生产者 {producer_id} 处理任务: {task.idx}, URL: {task.url}")
+                logger.info(
+                    f"生产者 {producer_id} 处理任务: {task.idx}, URL: {task.url}, 重试次数: {retry_counts[task_id]}")
 
                 # 检查是否需要获取新代理
-                if self.proxy_pool and (current_proxy is None or current_proxy.get('_usage_count', 0) >= 10):
-                    # 获取新代理
-                    current_proxy = self.proxy_pool.get_proxy()
-                    logger.info(f"生产者 {producer_id} 获取了新代理")
+                if self.proxy_pool and (current_proxy is None or current_proxy.get('_usage_count', 0) >= 5):
+                    # 尝试获取新代理，如果失败则等待重试
+                    while current_proxy is None and not self.stop_event.is_set():
+                        current_proxy = self.proxy_pool.get_proxy()
+                        if current_proxy:
+                            logger.info(f"生产者 {producer_id} 获取了新代理")
+                            break
 
-                # 如果使用代理池但获取不到代理，跳过此任务
-                if self.proxy_pool and not current_proxy:
-                    logger.warning(f"生产者 {producer_id} 无法获取代理，跳过任务 {task.idx}")
-                    continue
+                        # 代理获取失败，等待后重试
+                        wait_time = 10
+                        logger.warning(f"生产者 {producer_id} 无法获取代理，等待 {wait_time} 秒后重试")
+                        time.sleep(wait_time)
 
                 # 更新代理使用计数
                 if current_proxy:
@@ -230,45 +248,70 @@ class DataProcessor:
                         logger.warning(f"生产者 {producer_id} 废弃可能失效的代理")
                         current_proxy = None
 
-                    # 放入空结果
-                    result = {
-                        "task": task,
-                        "fetch_result": fetch_result,
-                        "parse_result": None,
-                        "success": False,
-                        "error": error_msg,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    self.result_queue.put(result)
+                    # 增加重试计数
+                    retry_counts[task_id] += 1
+
+                    # 如果未达到最大重试次数，将任务添加回队列末尾
+                    if retry_counts[task_id] < max_retries:
+                        logger.info(
+                            f"生产者 {producer_id} 将任务 {task.idx} 添加到队列末尾以重试 ({retry_counts[task_id]}/{max_retries})")
+                        task_queue.append(task)
+                    else:
+                        # 达到最大重试次数，创建失败结果
+                        logger.error(f"生产者 {producer_id} 任务 {task.idx} 已达到最大重试次数 {max_retries}，放弃处理")
+                        result = {
+                            "task": task,
+                            "fetch_result": fetch_result,
+                            "parse_result": None,
+                            "success": False,
+                            "error": f"达到最大重试次数 {max_retries}: {error_msg}",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        self.result_queue.put(result)
 
             except Exception as e:
                 logger.error(f"生产者 {producer_id} 处理任务 {task.idx} 时出错: {str(e)}")
 
-                # 放入错误结果
-                result = {
-                    "task": task,
-                    "success": False,
-                    "error": str(e),
-                    "timestamp": datetime.now().isoformat()
-                }
-                self.result_queue.put(result)
+                # 增加重试计数
+                retry_counts[task_id] += 1
+
+                # 如果未达到最大重试次数，将任务添加回队列末尾
+                if retry_counts[task_id] < max_retries:
+                    logger.info(
+                        f"生产者 {producer_id} 将任务 {task.idx} 添加到队列末尾以重试 ({retry_counts[task_id]}/{max_retries})")
+                    task_queue.append(task)
+                else:
+                    # 达到最大重试次数，创建失败结果
+                    logger.error(f"生产者 {producer_id} 任务 {task.idx} 已达到最大重试次数 {max_retries}，放弃处理")
+                    result = {
+                        "task": task,
+                        "success": False,
+                        "error": f"达到最大重试次数 {max_retries}: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    self.result_queue.put(result)
 
             finally:
-                # 更新处理计数
-                with self.task_lock:
-                    self.processed_count += 1
-                    if self.processed_count % 10 == 0 or self.processed_count == self.total_count:
-                        progress = (self.processed_count / self.total_count) * 100
-                        elapsed = time.time() - self.start_time
-                        remaining = (elapsed / self.processed_count) * (
-                                self.total_count - self.processed_count) if self.processed_count > 0 else 0
-                        logger.info(
-                            f"进度: {self.processed_count}/{self.total_count} ({progress:.2f}%), 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
+                # 只有当任务完成（成功或达到最大重试次数）时才更新处理计数
+                if retry_counts[task_id] >= max_retries or fetch_result.get("success", False):
+                    with self.task_lock:
+                        self.processed_count += 1
+                        if self.processed_count % 10 == 0 or self.processed_count == self.total_count:
+                            progress = (self.processed_count / self.total_count) * 100
+                            elapsed = time.time() - self.start_time
+                            remaining = (elapsed / self.processed_count) * (
+                                    self.total_count - self.processed_count) if self.processed_count > 0 else 0
+                            logger.info(
+                                f"进度: {self.processed_count}/{self.total_count} ({progress:.2f}%), 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
 
-            # 控制请求频率
-            time.sleep(random.uniform(1, 3))
+                # 控制请求频率
+                time.sleep(random.uniform(1, 3))
 
-        logger.info(f"生产者 {producer_id} 已完成所有任务")
+        # 报告未完成的任务数量
+        if task_queue:
+            logger.warning(f"生产者 {producer_id} 因停止信号而退出，还有 {len(task_queue)} 个任务未完成")
+        else:
+            logger.info(f"生产者 {producer_id} 已完成所有任务")
 
     def consumer(self, consumer_id: int):
         """
@@ -419,7 +462,7 @@ class DataProcessor:
 
             logger.info("所有消费者已完成工作")
             logger.info(
-                f"数据处理完成，共处理 {self.processed_count} 条记录，成功: {self.success_count}, 失败: {self.failure_count}")
+                f"数据处理完成，共处理 {self.processed_count} 条记录，成功: {self.success_count}, 失败: {self.failure_count}, 重试: {self.retry_count}")
             logger.info(f"总耗时: {elapsed_time:.2f} 秒")
 
         except Exception as e:

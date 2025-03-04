@@ -10,8 +10,9 @@ def main():
     # 设置日志
     log_dir = 'logs'
     os.makedirs(log_dir, exist_ok=True)
+    # 使用模块级日志器
     logger = setup_logger(
-        name=None,  # 使用root logger
+        name=__name__,
         log_file=f"{log_dir}/baike_scraper.log",
         level=logging.INFO,
         console_output=True

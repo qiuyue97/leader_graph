@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
-import logging
 import requests
 
 # 获取日志器
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 class ProxyProvider(ABC):

@@ -1,12 +1,12 @@
 import threading
 import time
-import logging
 from typing import List, Dict, Union, Optional
 import random
 from .providers import ProxyProvider
 
 # 获取日志器
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 class ProxyPool:

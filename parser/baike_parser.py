@@ -1,10 +1,10 @@
-import logging
 import re
 from typing import Dict, List, Any, Optional
 from bs4 import BeautifulSoup
 
 # 获取日志器
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 class BaikeParser:

@@ -1,6 +1,5 @@
 import time
 import random
-import logging
 from typing import Dict, Optional
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -15,7 +14,8 @@ except ImportError:
     has_fake_useragent = False
 
 # 获取日志器
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 class SeleniumScraper:
