@@ -41,7 +41,8 @@ class DataProcessor:
     def __init__(self, input_csv_path: str, proxy_pool: Optional[ProxyPool] = None,
                  num_producers: int = 3, num_consumers: int = 2,
                  output_dir: str = './person_data',
-                 save_interval: int = 10):
+                 save_interval: int = 10,
+                 min_content_size: int = 1024):
         """
         初始化数据处理器
 
@@ -82,10 +83,15 @@ class DataProcessor:
         ensure_dir(self.output_dir)
 
         # 创建爬虫和解析器
-        self.scraper = BaikeScraper(proxy_pool=proxy_pool, output_dir=output_dir)
+        self.scraper = BaikeScraper(
+            proxy_pool=proxy_pool,
+            output_dir=output_dir,
+            min_content_size=min_content_size
+        )
         self.parser = BaikeParser()
 
-        logger.info(f"数据处理器初始化完成，生产者:{num_producers}，消费者:{num_consumers}")
+        logger.info(
+            f"数据处理器初始化完成，生产者:{num_producers}，消费者:{num_consumers}，最小内容大小:{min_content_size}字节")
 
     def load_tasks_from_csv(self, filter_func: Optional[Callable[[pd.Series], bool]] = None) -> List[ProcessorTask]:
         """
@@ -164,6 +170,7 @@ class DataProcessor:
         """
         生产者函数，负责爬取数据并将结果放入队列
         失败的任务不会被丢弃，而是将其放回队列末尾重试
+        任何任务失败都会请求更换代理，如果没有可用代理则等待
 
         Args:
             producer_id: 生产者ID
@@ -179,7 +186,7 @@ class DataProcessor:
 
         # 记录任务重试次数
         retry_counts = {}
-        max_retries = 3  # 每个任务最大重试次数
+        max_retries = self.max_retries  # 使用类变量而不是硬编码
 
         while task_queue and not self.stop_event.is_set():
             # 从队列头部获取任务
@@ -190,28 +197,31 @@ class DataProcessor:
             if task_id not in retry_counts:
                 retry_counts[task_id] = 0
 
+            # 如果需要代理但当前无代理，则等待获取新代理
+            if self.proxy_pool and current_proxy is None:
+                # 尝试获取新代理，如果失败则等待重试
+                wait_time = 10
+                logger.info(f"生产者 {producer_id} 尝试获取新代理...")
+                while current_proxy is None and not self.stop_event.is_set():
+                    current_proxy = self.proxy_pool.get_proxy()
+                    if current_proxy:
+                        logger.info(f"生产者 {producer_id} 获取了新代理")
+                        break
+
+                    # 代理获取失败，等待后重试
+                    logger.warning(f"生产者 {producer_id} 无法获取代理，等待 {wait_time} 秒后重试")
+                    time.sleep(wait_time)
+                    # 增加等待时间，避免频繁请求
+                    wait_time = min(wait_time * 1.5, 60)  # 最长等待60秒
+
+            # 更新代理使用计数
+            if current_proxy:
+                current_proxy['_usage_count'] = current_proxy.get('_usage_count', 0) + 1
+                logger.debug(f"生产者 {producer_id} 代理使用计数: {current_proxy['_usage_count']}")
+
             try:
                 logger.info(
                     f"生产者 {producer_id} 处理任务: {task.idx}, URL: {task.url}, 重试次数: {retry_counts[task_id]}")
-
-                # 检查是否需要获取新代理
-                if self.proxy_pool and (current_proxy is None or current_proxy.get('_usage_count', 0) >= 5):
-                    # 尝试获取新代理，如果失败则等待重试
-                    while current_proxy is None and not self.stop_event.is_set():
-                        current_proxy = self.proxy_pool.get_proxy()
-                        if current_proxy:
-                            logger.info(f"生产者 {producer_id} 获取了新代理")
-                            break
-
-                        # 代理获取失败，等待后重试
-                        wait_time = 10
-                        logger.warning(f"生产者 {producer_id} 无法获取代理，等待 {wait_time} 秒后重试")
-                        time.sleep(wait_time)
-
-                # 更新代理使用计数
-                if current_proxy:
-                    current_proxy['_usage_count'] = current_proxy.get('_usage_count', 0) + 1
-                    logger.debug(f"生产者 {producer_id} 代理使用计数: {current_proxy['_usage_count']}")
 
                 # 获取页面内容
                 fetch_result = self.scraper.fetch_with_metadata(
@@ -222,30 +232,16 @@ class DataProcessor:
                     provided_proxy=current_proxy  # 传递当前代理
                 )
 
-                if fetch_result["success"]:
-                    # 解析内容
-                    html_content = fetch_result["html_content"]
-                    parse_result = self.parser.parse_page(html_content)
-
-                    # 将抓取和解析结果合并
-                    result = {
-                        "task": task,
-                        "fetch_result": fetch_result,
-                        "parse_result": parse_result,
-                        "success": parse_result["success"],
-                        "timestamp": datetime.now().isoformat()
-                    }
-
-                    # 放入结果队列
-                    self.result_queue.put(result)
-                    logger.info(f"生产者 {producer_id} 成功处理任务: {task.idx}")
-                else:
+                # 检查获取是否成功
+                if not fetch_result["success"]:
                     error_msg = fetch_result.get("error", "未知错误")
+                    content_size = fetch_result.get("content_size", 0)
+
                     logger.warning(f"生产者 {producer_id} 获取页面失败: {task.idx}, 错误: {error_msg}")
 
-                    # 如果获取失败且使用了代理，可以考虑废弃此代理
-                    if current_proxy and fetch_result.get("proxy_error", False):
-                        logger.warning(f"生产者 {producer_id} 废弃可能失效的代理")
+                    # 任务失败，无论什么原因都丢弃当前代理
+                    if self.proxy_pool:
+                        logger.warning(f"生产者 {producer_id} 任务失败，丢弃当前代理并请求新代理")
                         current_proxy = None
 
                     # 增加重试计数
@@ -256,6 +252,12 @@ class DataProcessor:
                         logger.info(
                             f"生产者 {producer_id} 将任务 {task.idx} 添加到队列末尾以重试 ({retry_counts[task_id]}/{max_retries})")
                         task_queue.append(task)
+
+                        # 等待一段随机时间后再次尝试
+                        wait_time = random.uniform(2, 5)
+                        logger.info(f"等待 {wait_time:.2f} 秒后重试")
+                        time.sleep(wait_time)
+                        continue
                     else:
                         # 达到最大重试次数，创建失败结果
                         logger.error(f"生产者 {producer_id} 任务 {task.idx} 已达到最大重试次数 {max_retries}，放弃处理")
@@ -268,9 +270,60 @@ class DataProcessor:
                             "timestamp": datetime.now().isoformat()
                         }
                         self.result_queue.put(result)
+                        continue
+
+                # 获取成功，解析内容
+                html_content = fetch_result["html_content"]
+                parse_result = self.parser.parse_page(html_content)
+
+                # 检查解析是否成功
+                if not parse_result["success"]:
+                    logger.warning(f"生产者 {producer_id} 解析页面失败: {task.idx}")
+
+                    # 增加重试计数
+                    retry_counts[task_id] += 1
+
+                    # 如果未达到最大重试次数，将任务添加回队列末尾
+                    if retry_counts[task_id] < max_retries:
+                        logger.info(
+                            f"生产者 {producer_id} 将任务 {task.idx} 添加到队列末尾以重试 ({retry_counts[task_id]}/{max_retries})")
+                        task_queue.append(task)
+                        continue
+                    else:
+                        # 达到最大重试次数，创建失败结果
+                        logger.error(f"生产者 {producer_id} 任务 {task.idx} 已达到最大重试次数 {max_retries}，放弃处理")
+                        result = {
+                            "task": task,
+                            "fetch_result": fetch_result,
+                            "parse_result": parse_result,
+                            "success": False,
+                            "error": f"达到最大重试次数 {max_retries}: 解析失败",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        self.result_queue.put(result)
+                        continue
+
+                # 将抓取和解析结果合并
+                result = {
+                    "task": task,
+                    "fetch_result": fetch_result,
+                    "parse_result": parse_result,
+                    "success": True,
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                # 放入结果队列
+                self.result_queue.put(result)
+                logger.info(
+                    f"生产者 {producer_id} 成功处理任务: {task.idx}, 内容大小: {fetch_result.get('content_size', 0)} 字节")
 
             except Exception as e:
                 logger.error(f"生产者 {producer_id} 处理任务 {task.idx} 时出错: {str(e)}")
+
+                # 任务异常，丢弃当前代理
+                if self.proxy_pool:
+                    logger.warning(f"生产者 {producer_id} 任务异常，丢弃当前代理并请求新代理")
+                    current_proxy = None
 
                 # 增加重试计数
                 retry_counts[task_id] += 1
@@ -427,7 +480,7 @@ class DataProcessor:
                 logger.info("等待代理池准备就绪...")
                 time.sleep(3)
 
-            # 启动生产者线程
+            # 启动生产者线程，每隔20秒启动一个
             producers = []
             for i in range(self.num_producers):
                 # 每个生产者负责处理一部分任务
@@ -437,8 +490,10 @@ class DataProcessor:
                 producers.append(t)
                 logger.info(f"生产者 {i} 已启动")
 
-                # 稍微延迟启动，避免同时争抢代理
-                time.sleep(0.5)
+                # 每启动一个生产者后等待20秒再启动下一个
+                if i < self.num_producers - 1:  # 如果不是最后一个生产者
+                    logger.info(f"等待20秒后启动下一个生产者...")
+                    time.sleep(20)
 
             # 等待所有生产者完成
             for p in producers:

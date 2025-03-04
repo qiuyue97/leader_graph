@@ -9,6 +9,7 @@ from proxy.pool import ProxyPool
 
 # 获取日志器
 from utils.logger import get_logger
+
 logger = get_logger(__name__)
 
 
@@ -17,7 +18,8 @@ class BaikeScraper:
 
     def __init__(self, proxy_pool: Optional[ProxyPool] = None,
                  output_dir: str = './person_data',
-                 max_retries: int = 3):
+                 max_retries: int = 3,
+                 min_content_size: int = 1024):  # 添加最小内容大小参数，默认1KB
         """
         初始化百科爬虫
 
@@ -25,10 +27,12 @@ class BaikeScraper:
             proxy_pool: 代理池实例，用于获取代理
             output_dir: 输出目录，用于保存 HTML 文件
             max_retries: 重试次数
+            min_content_size: 有效HTML内容的最小字节数
         """
         self.proxy_pool = proxy_pool
         self.output_dir = output_dir
         self.max_retries = max_retries
+        self.min_content_size = min_content_size  # 添加最小内容大小阈值
         self.selenium_scraper = None
 
         # 创建输出目录
@@ -66,6 +70,14 @@ class BaikeScraper:
                 html_content = self.selenium_scraper.fetch_page(url)
 
                 if html_content:
+                    # 检查内容大小是否满足最小要求
+                    content_size = len(html_content.encode('utf-8'))
+                    if content_size < self.min_content_size:
+                        logger.warning(
+                            f"获取的页面内容过小: {content_size} 字节，小于最小要求: {self.min_content_size} 字节")
+                        raise Exception(f"页面内容过小: {content_size} 字节")
+
+                    logger.info(f"成功获取页面，内容大小: {content_size} 字节")
                     return html_content
                 else:
                     logger.warning(f"第 {attempt + 1} 次尝试获取页面失败: {url}")
@@ -76,7 +88,8 @@ class BaikeScraper:
 
                 # 如果使用了代理池中的代理且失败，标记为失败
                 if proxy and self.proxy_pool and proxy != provided_proxy:
-                    self.proxy_pool.return_proxy(proxy, mark_as_failed=True)
+                    if hasattr(self.proxy_pool, 'return_proxy'):  # 检查是否有return_proxy方法
+                        self.proxy_pool.return_proxy(proxy, mark_as_failed=True)
 
                 if attempt == self.max_retries - 1:
                     logger.error(f"已达到最大重试次数: {url}")
@@ -121,7 +134,7 @@ class BaikeScraper:
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(html_content)
 
-            logger.info(f"已保存 HTML 内容到: {filename}")
+            logger.info(f"已保存 HTML 内容到: {filename}，文件大小: {len(html_content.encode('utf-8'))} 字节")
             return filename
         except Exception as e:
             logger.error(f"保存 HTML 内容失败: {str(e)}")
@@ -151,7 +164,21 @@ class BaikeScraper:
                 "success": False,
                 "html_content": "",
                 "url": url,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "error": "页面获取失败或内容为空"
+            }
+
+        # 检查内容大小
+        content_size = len(html_content.encode('utf-8'))
+        if content_size < self.min_content_size:
+            logger.warning(f"页面内容大小不符合要求: {content_size} 字节，小于阈值 {self.min_content_size} 字节")
+            return {
+                "success": False,
+                "html_content": html_content,  # 仍然保留原始内容以供调试
+                "content_size": content_size,
+                "url": url,
+                "timestamp": datetime.now().isoformat(),
+                "error": f"页面内容大小 ({content_size} 字节) 小于最小阈值 ({self.min_content_size} 字节)"
             }
 
         # 保存 HTML 内容
@@ -162,6 +189,7 @@ class BaikeScraper:
         return {
             "success": True,
             "html_content": html_content,
+            "content_size": content_size,
             "url": url,
             "person_name": person_name,
             "person_id": person_id,

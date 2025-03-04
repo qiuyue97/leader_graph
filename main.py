@@ -14,7 +14,7 @@ def main():
     logger = setup_logger(
         name=__name__,
         log_file=f"{log_dir}/baike_scraper.log",
-        level=logging.INFO,
+        level=logging.WARNING,
         console_output=True
     )
     logger.info("程序启动")
@@ -56,6 +56,10 @@ def main():
             else:
                 logger.warning("没有可用的代理提供者，将不使用代理")
 
+        # 获取配置中的最小内容大小
+        min_content_size = getattr(config, 'min_content_size', 1024)
+        logger.info(f"设置最小内容大小: {min_content_size} 字节")
+
         # 初始化数据处理器
         processor = DataProcessor(
             input_csv_path=config.input_csv_path,
@@ -63,7 +67,8 @@ def main():
             num_producers=config.num_producers,
             num_consumers=config.num_consumers,
             output_dir=config.output_dir,
-            save_interval=config.save_interval
+            save_interval=config.save_interval,
+            min_content_size=min_content_size  # 传入最小内容大小参数
         )
 
         # 开始处理数据

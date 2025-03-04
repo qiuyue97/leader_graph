@@ -30,6 +30,9 @@ class ProxyPool:
         self.refresh_interval = refresh_interval
         self.min_proxies = min_proxies
 
+        # 添加失败代理黑名单
+        self.failed_proxies = set()
+
         # 启动定期刷新线程
         self.stop_refresh = False
         self.refresh_thread = threading.Thread(target=self._periodic_refresh, daemon=True)
@@ -63,6 +66,35 @@ class ProxyPool:
 
             return proxy
 
+    def return_proxy(self, proxy: Dict[str, str], mark_as_failed: bool = False) -> None:
+        """
+        返回代理到池中或标记为失败
+
+        Args:
+            proxy: 代理字典
+            mark_as_failed: 是否标记为失败的代理
+        """
+        if not proxy:
+            return
+
+        with self.lock:
+            proxy_str = str(proxy)
+
+            if mark_as_failed:
+                # 将代理添加到黑名单
+                self.failed_proxies.add(proxy_str)
+                logger.warning(f"代理已标记为失败，加入黑名单")
+            else:
+                # 检查代理是否在黑名单中
+                if proxy_str in self.failed_proxies:
+                    logger.info(f"代理在黑名单中，不会重新添加到池")
+                    return
+
+                # 重置使用计数并返回到池中
+                proxy['_usage_count'] = 0
+                self.proxies.append(proxy)
+                logger.info(f"代理已返回到池，当前池中有 {len(self.proxies)} 个代理")
+
     def get_proxy_count(self) -> int:
         """返回当前可用代理数量"""
         with self.lock:
@@ -90,12 +122,12 @@ class ProxyPool:
             if new_proxies:
                 # 累积代理而不是替换
                 self.proxies.extend(new_proxies)
-                # 移除重复的代理
+                # 移除重复的代理和黑名单代理
                 unique_proxies = []
                 seen = set()
                 for proxy in self.proxies:
                     proxy_str = str(proxy)
-                    if proxy_str not in seen:
+                    if proxy_str not in seen and proxy_str not in self.failed_proxies:
                         seen.add(proxy_str)
                         unique_proxies.append(proxy)
 
@@ -128,43 +160,15 @@ class ProxyPool:
         self.stop_refresh = True
         logger.info("代理池关闭，停止刷新线程")
 
-    @classmethod
-    def from_config(cls, config: dict) -> 'ProxyPool':
+    def clear_failed_proxies(self) -> int:
         """
-        Create a proxy pool from configuration
-
-        Args:
-            config: Configuration dictionary with providers and pool settings
+        清除失败代理黑名单
 
         Returns:
-            Configured ProxyPool instance
+            清除的代理数量
         """
-        providers = []
-
-        # 创建提供者
-        for provider_config in config.get('providers', []):
-            provider_type = provider_config.get('type')
-            if provider_type == 'zdopen':
-                from .providers import ZDOpenProxyProvider
-                provider = ZDOpenProxyProvider(
-                    api=provider_config.get('api'),
-                    akey=provider_config.get('akey'),
-                    proxy_username=provider_config.get('proxy_username'),
-                    proxy_password=provider_config.get('proxy_password'),
-                    type=provider_config.get('type', '3')
-                )
-                providers.append(provider)
-            elif provider_type == 'xiaoxiang':
-                from .providers import XiaoXiangProxyProvider
-                provider = XiaoXiangProxyProvider(
-                    app_key=provider_config.get('app_key'),
-                    app_secret=provider_config.get('app_secret')
-                )
-                providers.append(provider)
-
-        # 创建代理池
-        return cls(
-            proxy_providers=providers,
-            refresh_interval=config.get('refresh_interval', 15),
-            min_proxies=config.get('min_proxies', 20)
-        )
+        with self.lock:
+            count = len(self.failed_proxies)
+            self.failed_proxies.clear()
+            logger.info(f"已清除 {count} 个失败代理记录")
+            return count

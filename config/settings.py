@@ -23,6 +23,7 @@ class Config:
     # 爬虫设置
     use_mobile: bool = True
     max_retries: int = 3
+    min_content_size: int = 1024
 
     # 代理设置
     use_proxy: bool = True
@@ -146,7 +147,8 @@ class Config:
             },
             save_interval=10,
             request_delay_min=1.0,
-            request_delay_max=3.0
+            request_delay_max=3.0,
+            min_content_size=1024
         )
 
         return config.to_file(filepath)
