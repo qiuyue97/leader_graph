@@ -6,6 +6,7 @@ from datetime import datetime
 
 from .selenium_scraper import SeleniumScraper
 from proxy.pool import ProxyPool
+from utils.content_validator import ContentValidator  # 导入内容验证器
 
 # 获取日志器
 from utils.logger import get_logger
@@ -19,7 +20,7 @@ class BaikeScraper:
     def __init__(self, proxy_pool: Optional[ProxyPool] = None,
                  output_dir: str = './person_data',
                  max_retries: int = 3,
-                 min_content_size: int = 1024):  # 添加最小内容大小参数，默认1KB
+                 min_content_size: int = 1024):
         """
         初始化百科爬虫
 
@@ -32,8 +33,11 @@ class BaikeScraper:
         self.proxy_pool = proxy_pool
         self.output_dir = output_dir
         self.max_retries = max_retries
-        self.min_content_size = min_content_size  # 添加最小内容大小阈值
+        self.min_content_size = min_content_size
         self.selenium_scraper = None
+
+        # 初始化内容验证器
+        self.content_validator = ContentValidator(min_content_size=min_content_size)
 
         # 创建输出目录
         os.makedirs(self.output_dir, exist_ok=True)
@@ -70,15 +74,26 @@ class BaikeScraper:
                 html_content = self.selenium_scraper.fetch_page(url)
 
                 if html_content:
-                    # 检查内容大小是否满足最小要求
-                    content_size = len(html_content.encode('utf-8'))
-                    if content_size < self.min_content_size:
-                        logger.warning(
-                            f"获取的页面内容过小: {content_size} 字节，小于最小要求: {self.min_content_size} 字节")
-                        raise Exception(f"页面内容过小: {content_size} 字节")
+                    # 使用内容验证器验证内容
+                    validation_result = self.content_validator.is_valid_content(html_content)
 
-                    logger.info(f"成功获取页面，内容大小: {content_size} 字节")
-                    return html_content
+                    if validation_result["valid"]:
+                        logger.info(f"成功获取页面，内容大小: {validation_result['content_size']} 字节")
+                        return html_content
+                    else:
+                        reason = validation_result.get("reason", "未知原因")
+                        logger.warning(f"第 {attempt + 1} 次尝试获取的页面无效: {reason}")
+
+                        # 如果需要更换代理
+                        if validation_result.get("need_proxy_change", False):
+                            logger.info("需要更换代理")
+                            if proxy and self.proxy_pool and proxy != provided_proxy:
+                                if hasattr(self.proxy_pool, 'return_proxy'):
+                                    self.proxy_pool.return_proxy(proxy, mark_as_failed=True)
+                            # 强制下一次使用新代理
+                            proxy = None
+
+                        raise Exception(f"页面内容无效: {reason}")
                 else:
                     logger.warning(f"第 {attempt + 1} 次尝试获取页面失败: {url}")
                     raise Exception("获取页面失败")
@@ -88,7 +103,7 @@ class BaikeScraper:
 
                 # 如果使用了代理池中的代理且失败，标记为失败
                 if proxy and self.proxy_pool and proxy != provided_proxy:
-                    if hasattr(self.proxy_pool, 'return_proxy'):  # 检查是否有return_proxy方法
+                    if hasattr(self.proxy_pool, 'return_proxy'):
                         self.proxy_pool.return_proxy(proxy, mark_as_failed=True)
 
                 if attempt == self.max_retries - 1:
@@ -168,17 +183,20 @@ class BaikeScraper:
                 "error": "页面获取失败或内容为空"
             }
 
-        # 检查内容大小
-        content_size = len(html_content.encode('utf-8'))
-        if content_size < self.min_content_size:
-            logger.warning(f"页面内容大小不符合要求: {content_size} 字节，小于阈值 {self.min_content_size} 字节")
+        # 使用内容验证器再次验证内容
+        validation_result = self.content_validator.is_valid_content(html_content)
+
+        if not validation_result["valid"]:
+            reason = validation_result.get("reason", "未知原因")
+            logger.warning(f"页面内容验证失败: {reason}")
             return {
                 "success": False,
                 "html_content": html_content,  # 仍然保留原始内容以供调试
-                "content_size": content_size,
+                "content_size": validation_result.get("content_size", 0),
                 "url": url,
                 "timestamp": datetime.now().isoformat(),
-                "error": f"页面内容大小 ({content_size} 字节) 小于最小阈值 ({self.min_content_size} 字节)"
+                "error": f"页面内容验证失败: {reason}",
+                "validation_result": validation_result
             }
 
         # 保存 HTML 内容
@@ -189,10 +207,11 @@ class BaikeScraper:
         return {
             "success": True,
             "html_content": html_content,
-            "content_size": content_size,
+            "content_size": validation_result.get("content_size", 0),
             "url": url,
             "person_name": person_name,
             "person_id": person_id,
             "saved_file": saved_file,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "validation_result": validation_result
         }
