@@ -1,12 +1,19 @@
 import logging
 import os
+import argparse
 from config.settings import Config
 from proxy.pool import ProxyPool
-from processor.data_processor import DataProcessor
+from processor.data_processor import DataProcessor, ProcessStage
 from utils.logger import setup_logger
 
 
 def main():
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='百度百科爬虫和解析工具')
+    parser.add_argument('--stage', type=str, default='full', choices=['fetch', 'parse', 'full'],
+                        help='处理阶段: fetch(仅爬取), parse(仅解析), full(完整流程)')
+    args = parser.parse_args()
+
     # 设置日志
     log_dir = 'logs'
     os.makedirs(log_dir, exist_ok=True)
@@ -14,10 +21,10 @@ def main():
     logger = setup_logger(
         name=__name__,
         log_file=f"{log_dir}/baike_scraper.log",
-        level=logging.WARNING,
+        level=logging.INFO,
         console_output=True
     )
-    logger.info("程序启动")
+    logger.info(f"程序启动，运行阶段: {args.stage}")
 
     try:
         # 加载配置
@@ -68,12 +75,20 @@ def main():
             num_consumers=config.num_consumers,
             output_dir=config.output_dir,
             save_interval=config.save_interval,
-            min_content_size=min_content_size  # 传入最小内容大小参数
+            min_content_size=min_content_size
         )
 
-        # 开始处理数据
-        logger.info("开始处理数据...")
-        processor.process_data()
+        # 根据指定的阶段执行相应的处理
+        if args.stage == 'fetch' or args.stage == 'full':
+            logger.info("开始执行爬取阶段...")
+            processor.process_fetch_stage()
+            logger.info("爬取阶段完成")
+
+        if args.stage == 'parse' or args.stage == 'full':
+            logger.info("开始执行解析阶段...")
+            processor.process_parse_stage()
+            logger.info("解析阶段完成")
+
         logger.info("数据处理完成")
 
     except Exception as e:

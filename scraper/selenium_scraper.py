@@ -60,7 +60,7 @@ class SeleniumScraper:
         """设置并初始化 WebDriver"""
         self.options = Options()
 
-        # 基本设置
+        # 现有设置
         if self.headless:
             self.options.add_argument("--headless")
 
@@ -72,6 +72,18 @@ class SeleniumScraper:
         self.options.add_argument('--disable-gpu')
         self.options.add_argument('--no-sandbox')
         self.options.add_argument('--disable-dev-shm-usage')
+
+        # 更多抑制警告的选项
+        self.options.add_argument('--log-level=3')  # 只显示严重错误
+        self.options.add_experimental_option('excludeSwitches', ['enable-logging'])
+
+        # 彻底抑制控制台输出的额外选项
+        self.options.add_argument('--silent')
+        self.options.add_argument('--disable-logging')
+        self.options.add_experimental_option('useAutomationExtension', False)
+
+        # 禁用图像以彻底解决libpng警告（如果不需要处理图像）
+        self.options.add_argument('--blink-settings=imagesEnabled=false')
 
         # 移动设备模拟
         if self.mobile:
