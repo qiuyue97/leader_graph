@@ -108,6 +108,20 @@ class DataProcessor:
         logger.info(
             f"数据处理器初始化完成，生产者:{num_producers}，消费者:{num_consumers}，最小内容大小:{min_content_size}字节")
 
+    def _reorder_columns(self, df):
+        """
+        重新排列DataFrame的列，确保特定的元数据列位于最后
+
+        Args:
+            df: 原始DataFrame
+
+        Returns:
+            重新排序后的DataFrame
+        """
+        meta_columns = ['html_cached', 'html_path', 'parsed']
+        other_columns = [col for col in df.columns if col not in meta_columns]
+        return df[other_columns + meta_columns]
+
     def load_tasks_from_csv(self, filter_func: Optional[Callable[[pd.Series], bool]] = None) -> List[ProcessorTask]:
         """
         从CSV文件加载任务
@@ -134,6 +148,7 @@ class DataProcessor:
                         df[col] = df[col].astype(str)
 
             # 保存修改后的DataFrame
+            df = self._reorder_columns(df)
             df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
 
             # 刷新缓存索引
@@ -174,6 +189,7 @@ class DataProcessor:
                     tasks.append(task)
 
             # 保存更新后的DataFrame
+            df = self._reorder_columns(df)
             df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
 
             logger.info(f"共加载 {len(tasks)} 个任务，已缓存 {sum(1 for t in tasks if t.cached)} 个")
@@ -362,6 +378,7 @@ class DataProcessor:
 
                         # 定期保存到CSV
                         if save_counter >= self.save_interval or self.result_queue.empty():
+                            original_df = self._reorder_columns(original_df)
                             original_df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
                             logger.info(
                                 f"爬取消费者 {consumer_id} 已保存更新到CSV，成功: {self.success_count}, 失败: {self.failure_count}")
@@ -381,6 +398,7 @@ class DataProcessor:
 
         # 确保最后保存一次
         with self.result_lock:
+            original_df = self._reorder_columns(original_df)
             original_df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
             logger.info(f"爬取消费者 {consumer_id} 最终保存，成功: {self.success_count}, 失败: {self.failure_count}")
 
@@ -524,6 +542,7 @@ class DataProcessor:
                         continue
 
                     # 更新DataFrame中对应行的数据
+                    # 更新DataFrame中对应行的数据
                     with self.result_lock:
                         if success and "parse_result" in result and result["parse_result"]:
                             parse_result = result["parse_result"]
@@ -534,6 +553,15 @@ class DataProcessor:
                             if 'person_summary' not in original_df.columns:
                                 original_df['person_summary'] = ''
                             original_df.at[idx, 'person_summary'] = parse_result.get('summary', '')
+
+                            # 添加新的人物详细信息字段
+                            person_details = parse_result.get('person_details', {})
+
+                            # 确保所有需要的列都存在
+                            for col in ['ethnicity', 'native_place', 'birth_date', 'alma_mater', 'political_status']:
+                                if col not in original_df.columns:
+                                    original_df[col] = ''
+                                original_df.at[idx, col] = person_details.get(col, '')
 
                             # 标记为已解析
                             original_df.at[idx, 'parsed'] = 'Y'
@@ -551,6 +579,7 @@ class DataProcessor:
 
                         # 定期保存到CSV
                         if save_counter >= self.save_interval or self.result_queue.empty():
+                            original_df = self._reorder_columns(original_df)
                             original_df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
                             logger.info(
                                 f"解析消费者 {consumer_id} 已保存更新到CSV，成功: {self.success_count}, 失败: {self.failure_count}")
@@ -570,6 +599,7 @@ class DataProcessor:
 
         # 确保最后保存一次
         with self.result_lock:
+            original_df = self._reorder_columns(original_df)
             original_df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
             logger.info(f"解析消费者 {consumer_id} 最终保存，成功: {self.success_count}, 失败: {self.failure_count}")
 

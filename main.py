@@ -10,7 +10,7 @@ from utils.logger import setup_logger
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='百度百科爬虫和解析工具')
-    parser.add_argument('--stage', type=str, default='full', choices=['fetch', 'parse', 'full'],
+    parser.add_argument('--stage', type=str, default='parse', choices=['fetch', 'parse', 'full'],
                         help='处理阶段: fetch(仅爬取), parse(仅解析), full(完整流程)')
     args = parser.parse_args()
 

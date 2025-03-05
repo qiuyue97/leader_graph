@@ -35,7 +35,8 @@ class BaikeParser:
                 "success": False,
                 "title": "",
                 "career_info": [],
-                "summary": ""
+                "summary": "",
+                "person_details": {}  # 添加新字段
             }
 
         try:
@@ -44,6 +45,8 @@ class BaikeParser:
             career_raw = self.parse_career_from_html(html_content)
             career_info = self.clean_career_info(career_raw)
             summary = self.extract_summary(html_content)
+            # 提取人物详细信息
+            person_details = self.extract_person_details(html_content)
 
             # 记录日志
             logger.info(f"成功解析页面")
@@ -54,7 +57,8 @@ class BaikeParser:
                 "success": True,
                 "title": title,
                 "career_info": career_info,
-                "summary": summary
+                "summary": summary,
+                "person_details": person_details  # 添加新字段
             }
         except Exception as e:
             logger.error(f"解析页面内容出错: {str(e)}")
@@ -63,6 +67,7 @@ class BaikeParser:
                 "title": "",
                 "career_info": [],
                 "summary": "",
+                "person_details": {},  # 添加新字段
                 "error": str(e)
             }
 
@@ -204,7 +209,7 @@ class BaikeParser:
 
     def extract_summary(self, html_content: str) -> str:
         """
-        提取百科页面的摘要信息
+        从百科页面的meta标签中提取description内容作为摘要信息
 
         Args:
             html_content: HTML 内容
@@ -217,7 +222,15 @@ class BaikeParser:
 
         soup = BeautifulSoup(html_content, 'html.parser')
 
-        # 尝试提取摘要部分
+        # 查找meta description标签
+        meta_description = soup.find('meta', attrs={'name': 'description'})
+        if meta_description and meta_description.get('content'):
+            description = meta_description.get('content').strip()
+            # 清理description内容
+            description = re.sub(r'\s+', ' ', description).strip()
+            return description
+
+        # 如果没有找到meta description，回退到原来的摘要提取逻辑
         summary_selectors = [
             'div.lemma-summary',  # 桌面版摘要
             'div.brief',  # 移动版摘要
@@ -244,6 +257,104 @@ class BaikeParser:
                 return first_text
 
         return ""
+
+    def extract_person_details(self, html_content: str) -> Dict[str, str]:
+        """
+        从百科页面提取人物的详细信息，包括民族、籍贯、出生日期、毕业院校、政治面貌等
+
+        Args:
+            html_content: HTML 内容
+
+        Returns:
+            包含人物详细信息的字典
+        """
+        if not html_content:
+            return {
+                "ethnicity": "",  # 民族
+                "native_place": "",  # 籍贯
+                "birth_date": "",  # 出生日期
+                "alma_mater": "",  # 毕业院校
+                "political_status": ""  # 政治面貌
+            }
+
+        result = {
+            "ethnicity": "",
+            "native_place": "",
+            "birth_date": "",
+            "alma_mater": "",
+            "political_status": ""
+        }
+
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+
+            # 查找所有信息标题
+            info_titles = soup.find_all('div', class_='info-title')
+
+            for title_div in info_titles:
+                title_text = title_div.get_text().strip()
+
+                # 获取相邻的内容div
+                content_div = title_div.find_next('div', class_='info-content')
+                if not content_div:
+                    continue
+
+                content_text = content_div.get_text().strip()
+
+                # 根据标题将内容填入对应字段
+                if '民族' in title_text:
+                    result["ethnicity"] = content_text
+                elif '籍贯' in title_text:
+                    result["native_place"] = content_text
+                elif '出生日期' in title_text or '出生年月' in title_text:
+                    result["birth_date"] = content_text
+                elif '毕业院校' in title_text:
+                    result["alma_mater"] = content_text
+                elif '政治面貌' in title_text:
+                    result["political_status"] = content_text
+
+            # 尝试另一种格式的基本信息表格
+            if not any(result.values()):
+                # 查找桌面版的基本信息区域
+                basic_info = soup.find('div', class_='basic-info')
+                if basic_info:
+                    dt_items = basic_info.find_all('dt', class_='basicInfo-item')
+                    for dt in dt_items:
+                        item_name = dt.get_text().strip()
+                        # 获取对应的dd元素
+                        dd = dt.find_next('dd', class_='basicInfo-item')
+                        if dd:
+                            item_value = dd.get_text().strip()
+
+                            # 匹配字段
+                            if '民族' in item_name:
+                                result["ethnicity"] = item_value
+                            elif '籍贯' in item_name:
+                                result["native_place"] = item_value
+                            elif '出生日期' in item_name or '出生年月' in item_name:
+                                result["birth_date"] = item_value
+                            elif '毕业院校' in item_name:
+                                result["alma_mater"] = item_value
+                            elif '政治面貌' in item_name:
+                                result["political_status"] = item_value
+
+            # 清理HTML标签和多余空白
+            for key in result:
+                if result[key]:
+                    # 移除HTML标签
+                    result[key] = re.sub(r'<[^>]+>', '', result[key])
+                    # 移除多余空白
+                    result[key] = re.sub(r'\s+', ' ', result[key]).strip()
+                    # 移除引用标记 [1] 等
+                    result[key] = re.sub(r'\[\d+(-\d+)?\]', '', result[key]).strip()
+
+            logger.info(
+                f"提取到人物详细信息: 民族={result['ethnicity']}, 籍贯={result['native_place']}, 出生日期={result['birth_date']}, 毕业院校={result['alma_mater']}, 政治面貌={result['political_status']}")
+
+        except Exception as e:
+            logger.error(f"提取人物详细信息时出错: {str(e)}")
+
+        return result
 
     def extract_basic_info(self, html_content: str) -> Dict[str, str]:
         """
