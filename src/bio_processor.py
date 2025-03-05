@@ -27,7 +27,7 @@ logging.basicConfig(
     level=logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("../temp_code/bio_processing.log"),
+        logging.FileHandler("../logs/bio_processing.log"),
         logging.StreamHandler()
     ]
 )

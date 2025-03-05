@@ -21,7 +21,7 @@ class Config:
 
     # 数据文件路径
     person_data_dir = "./data/result/"
-    department_csv = "./temp_code/shanghai_departments.csv"
+    department_csv = "./data/shanghai_departments.csv"
 
 
 # 自定义进度条
