@@ -9,19 +9,21 @@ import csv
 import sys
 from neo4j import GraphDatabase
 import time
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config.settings import Config as basicConfig
 
 
 # 配置信息
 class Config:
     # Neo4j 数据库连接配置
-    config_path = '../config.yaml'
+    config_path = '/root/leader_graph/config.yaml'
     config = basicConfig.from_file(config_path)
     neo4j_config = config.neo4j_config
 
     # 数据文件路径
-    person_data_dir = "./data/result/"
-    department_csv = "./data/shanghai_departments.csv"
+    person_data_dir = "/root/leader_graph/data/result/"
+    department_csv = "/root/leader_graph/data/shanghai_departments.csv"
 
 
 # 自定义进度条
@@ -80,6 +82,103 @@ def create_indexes(session):
     print("已创建索引")
 
 
+def create_same_hometown_relationships(session):
+    """创建人物之间的同乡关系"""
+    cypher = """
+    MATCH (p1:Person), (p2:Person)
+    WHERE p1.native_place IS NOT NULL 
+      AND p1.native_place <> '' 
+      AND p1.native_place = p2.native_place 
+      AND p1 <> p2
+    MERGE (p1)-[r:SAME_HOMETOWN]->(p2)
+    RETURN count(r) as rel_count
+    """
+
+    result = session.run(cypher)
+    rel_count = result.single()["rel_count"]
+    print(f"已创建 {rel_count} 个同乡关系")
+
+
+def create_schoolmates_relationships(session):
+    """创建人物之间的同学关系"""
+    cypher = """
+    MATCH (p1:Person)-[r1:STUDIED_AT]->(s:Department)<-[r2:STUDIED_AT]-(p2:Person)
+    WHERE p1 <> p2
+    WITH p1, p2, s, r1, r2,
+         // 计算是否时间重叠
+         CASE
+            WHEN r1.startYear IS NOT NULL AND r1.endYear IS NOT NULL AND 
+                 r2.startYear IS NOT NULL AND r2.endYear IS NOT NULL
+            THEN (r1.startYear * 12 + COALESCE(r1.startMonth, 1)) <= (r2.endYear * 12 + COALESCE(r2.endMonth, 12)) AND
+                 (r2.startYear * 12 + COALESCE(r2.startMonth, 1)) <= (r1.endYear * 12 + COALESCE(r1.endMonth, 12))
+            ELSE false
+         END as atTheSameTime,
+         s.department_name as school,
+
+         // 计算重叠起始年月
+         CASE
+            WHEN r1.startYear IS NOT NULL AND r2.startYear IS NOT NULL
+            THEN CASE WHEN r1.startYear > r2.startYear THEN r1.startYear ELSE r2.startYear END
+         END as overlapStartYear,
+
+         CASE
+            WHEN r1.startYear IS NOT NULL AND r2.startYear IS NOT NULL AND
+                 r1.startYear = r2.startYear AND
+                 r1.startMonth IS NOT NULL AND r2.startMonth IS NOT NULL
+            THEN CASE WHEN r1.startMonth > r2.startMonth THEN r1.startMonth ELSE r2.startMonth END
+            WHEN r1.startYear IS NOT NULL AND r2.startYear IS NOT NULL AND r1.startYear > r2.startYear
+            THEN COALESCE(r1.startMonth, 1)
+            WHEN r1.startYear IS NOT NULL AND r2.startYear IS NOT NULL AND r2.startYear > r1.startYear
+            THEN COALESCE(r2.startMonth, 1)
+         END as overlapStartMonth,
+
+         // 计算重叠结束年月
+         CASE
+            WHEN r1.endYear IS NOT NULL AND r2.endYear IS NOT NULL
+            THEN CASE WHEN r1.endYear < r2.endYear THEN r1.endYear ELSE r2.endYear END
+         END as overlapEndYear,
+
+         CASE
+            WHEN r1.endYear IS NOT NULL AND r2.endYear IS NOT NULL AND
+                 r1.endYear = r2.endYear AND
+                 r1.endMonth IS NOT NULL AND r2.endMonth IS NOT NULL
+            THEN CASE WHEN r1.endMonth < r2.endMonth THEN r1.endMonth ELSE r2.endMonth END
+            WHEN r1.endYear IS NOT NULL AND r2.endYear IS NOT NULL AND r1.endYear < r2.endYear
+            THEN COALESCE(r1.endMonth, 12)
+            WHEN r1.endYear IS NOT NULL AND r2.endYear IS NOT NULL AND r2.endYear < r1.endYear
+            THEN COALESCE(r2.endMonth, 12)
+         END as overlapEndMonth
+
+    // 处理重叠时间段的格式化
+    WITH p1, p2, s.department_name as school, atTheSameTime,
+         overlapStartYear, overlapStartMonth, overlapEndYear, overlapEndMonth
+
+    WITH p1, p2, school, atTheSameTime,
+         CASE 
+            WHEN atTheSameTime AND overlapStartYear IS NOT NULL AND overlapEndYear IS NOT NULL
+            THEN toString(overlapStartYear) + '.' +
+                 CASE WHEN overlapStartMonth < 10 THEN '0' + toString(overlapStartMonth) ELSE toString(overlapStartMonth) END +
+                 '-' + toString(overlapEndYear) + '.' +
+                 CASE WHEN overlapEndMonth < 10 THEN '0' + toString(overlapEndMonth) ELSE toString(overlapEndMonth) END
+         END as overlapPeriod
+
+    // 根据重叠期是否存在采用不同的MERGE语句
+    FOREACH(dummy IN CASE WHEN overlapPeriod IS NOT NULL THEN [1] ELSE [] END |
+        MERGE (p1)-[r:SCHOOLMATES {atTheSameTime: atTheSameTime, school: school, overlapPeriod: overlapPeriod}]->(p2)
+    )
+
+    FOREACH(dummy IN CASE WHEN overlapPeriod IS NULL THEN [1] ELSE [] END |
+        MERGE (p1)-[r:SCHOOLMATES {atTheSameTime: atTheSameTime, school: school}]->(p2)
+    )
+
+    RETURN count(*) as rel_count
+    """
+
+    result = session.run(cypher)
+    rel_count = result.single()["rel_count"]
+    print(f"已创建 {rel_count} 个同学关系")
+
+
 # Neo4j数据导入主函数
 def import_data_to_neo4j():
     """将数据导入到Neo4j图数据库"""
@@ -121,6 +220,12 @@ def import_data_to_neo4j():
 
             except Exception as e:
                 print(f"\n处理文件 {file_path} 时出错: {e}")
+
+        print("\n创建同乡关系...")
+        create_same_hometown_relationships(session)
+
+        print("\n创建同学关系...")
+        create_schoolmates_relationships(session)
 
     # 关闭Neo4j连接
     driver.close()

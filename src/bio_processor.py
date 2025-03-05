@@ -16,7 +16,8 @@ import openai
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import random
-
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config.settings import Config
 
 # 导入数据模型
