@@ -40,6 +40,22 @@ class Config:
     request_delay_min: float = 1.0
     request_delay_max: float = 3.0
 
+    # Azure OpenAI API 设置
+    azure_openai_endpoint: str = "your_url"
+    azure_openai_api_key: str = "your_key"
+    azure_openai_api_version: str = "2024-10-21"
+
+    # AI处理设置
+    ai_max_threads: int = 10
+    ai_request_rate: int = 8  # 每秒请求数
+    ai_token_limit: int = 90000  # 每分钟令牌数限制
+
+    neo4j_config: Dict[str, Any] = field(default_factory=lambda: {
+        "uri": "bolt://localhost:27687",
+        "user": "neo4j",
+        "password": "your_password"
+    })
+
     # 单例实例
     _instance = None
 
