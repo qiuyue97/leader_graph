@@ -44,6 +44,7 @@ class Config:
     azure_openai_endpoint: str = "your_url"
     azure_openai_api_key: str = "your_key"
     azure_openai_api_version: str = "2024-10-21"
+    qwen_api_key: str = "your_key"
 
     # AI处理设置
     ai_max_threads: int = 10
