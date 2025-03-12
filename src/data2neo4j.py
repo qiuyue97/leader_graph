@@ -83,14 +83,14 @@ def create_indexes(session):
 
 
 def create_same_hometown_relationships(session):
-    """创建人物之间的同乡关系"""
+    """创建人物之间的同乡关系，并添加native_place属性"""
     cypher = """
     MATCH (p1:Person), (p2:Person)
     WHERE p1.native_place IS NOT NULL 
       AND p1.native_place <> '' 
       AND p1.native_place = p2.native_place 
       AND p1 <> p2
-    MERGE (p1)-[r:SAME_HOMETOWN]->(p2)
+    MERGE (p1)-[r:SAME_HOMETOWN {native_place: p1.native_place}]->(p2)
     RETURN count(r) as rel_count
     """
 
@@ -221,11 +221,14 @@ def import_data_to_neo4j():
             except Exception as e:
                 print(f"\n处理文件 {file_path} 时出错: {e}")
 
+        print("\n处理部门层级关系...")
+        process_department_hierarchy(session, departments)
+
         print("\n创建同乡关系...")
         create_same_hometown_relationships(session)
 
-        print("\n创建同学关系...")
-        create_schoolmates_relationships(session)
+        # print("\n创建同学关系...")
+        # create_schoolmates_relationships(session)
 
     # 关闭Neo4j连接
     driver.close()
