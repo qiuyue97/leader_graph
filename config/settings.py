@@ -57,6 +57,13 @@ class Config:
         "password": "your_password"
     })
 
+    db_config: Dict[str, str] = field(default_factory=lambda: {
+        "host": "localhost",
+        "user": "root",
+        "password": "password",
+        "database": "cnfic_leader"
+    })
+
     # 单例实例
     _instance = None
 
