@@ -221,7 +221,7 @@ class DBExtractor:
             self.cursor.execute(update_query, (field_value, org_id))
             self.connection.commit()
 
-            logger.info(f"成功更新组织ID={org_id}的{field_name}={field_value}")
+            logger.info(f"成功更新组织ID={org_id}的{field_name}")
             return True
 
         except mysql.connector.Error as e:
