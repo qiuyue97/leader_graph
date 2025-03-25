@@ -61,7 +61,8 @@ class Config:
         "host": "localhost",
         "user": "root",
         "password": "password",
-        "database": "cnfic_leader"
+        "database": "cnfic_leader",
+        "charset": "utf8mb4"
     })
 
     # 单例实例

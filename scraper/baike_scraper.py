@@ -43,19 +43,21 @@ class BaikeScraper:
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"已创建输出目录: {self.output_dir}")
 
-    def fetch_page(self, url: str, use_mobile: bool = True,
+    def fetch_page(self, url: str, use_mobile: bool = False,
                    provided_proxy: Optional[Dict[str, str]] = None) -> Optional[str]:
         """
         使用 Selenium 获取页面 HTML 内容
 
         Args:
             url: 要抓取的 URL
-            use_mobile: 是否使用移动设备模拟
+            use_mobile: 是否使用移动设备模拟 (现在总是使用桌面版)
             provided_proxy: 外部提供的代理
 
         Returns:
             成功时返回 HTML 内容，失败时返回 None
         """
+        # 将参数统一为False，确保使用桌面版
+        use_mobile = False
         for attempt in range(self.max_retries):
             try:
                 # 使用外部提供的代理，或者从代理池获取

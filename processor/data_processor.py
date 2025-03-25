@@ -16,6 +16,7 @@ from parser.baike_parser import BaikeParser
 from utils.logger import get_logger
 from utils.file_utils import ensure_dir
 from utils.html_cache import HTMLCacheManager
+from utils.db_utils import DBManager
 
 # 获取日志器
 logger = get_logger(__name__)
@@ -50,7 +51,7 @@ class DataProcessor:
     支持分离的爬取和解析阶段
     """
 
-    def __init__(self, input_csv_path: str, proxy_pool: Optional[ProxyPool] = None,
+    def __init__(self, config, proxy_pool: Optional[ProxyPool] = None,
                  num_producers: int = 3, num_consumers: int = 2,
                  output_dir: str = './data/person_data',
                  save_interval: int = 10,
@@ -59,14 +60,14 @@ class DataProcessor:
         初始化数据处理器
 
         Args:
-            input_csv_path: 输入CSV文件路径
+            config: 配置对象，包含数据库配置
             proxy_pool: 代理池实例
             num_producers: 生产者线程数
             num_consumers: 消费者线程数
             output_dir: 输出目录
             save_interval: 自动保存间隔（处理多少条记录后保存一次）
         """
-        self.input_csv_path = input_csv_path
+        self.db_manager = DBManager(config.db_config)
         self.proxy_pool = proxy_pool
         self.num_producers = num_producers
         self.num_consumers = num_consumers
@@ -122,81 +123,55 @@ class DataProcessor:
         other_columns = [col for col in df.columns if col not in meta_columns]
         return df[other_columns + meta_columns]
 
-    def load_tasks_from_csv(self, filter_func: Optional[Callable[[pd.Series], bool]] = None) -> List[ProcessorTask]:
+    def load_tasks_from_db(self, filter_existing=True) -> List[ProcessorTask]:
         """
-        从CSV文件加载任务
+        从数据库加载任务
 
         Args:
-            filter_func: 过滤函数，决定哪些行需要处理
+            filter_existing: 是否过滤掉已有HTML内容的记录
 
         Returns:
             任务列表
         """
         try:
-            logger.info(f"从 {self.input_csv_path} 加载数据")
-            df = pd.read_csv(self.input_csv_path, encoding='utf-8-sig')
-
-            # 检查并添加缺失的列
-            required_columns = ['person_title', 'person_bio_raw', 'html_cached', 'html_path', 'parsed']
-            for col in required_columns:
-                if col not in df.columns:
-                    logger.info(f"CSV中未找到'{col}'列，正在创建...")
-                    df[col] = ''
-                else:
-                    # 确保字符串列使用字符串类型
-                    if col in ['html_cached', 'html_path', 'parsed']:
-                        df[col] = df[col].astype(str)
-
-            # 保存修改后的DataFrame
-            df = self._reorder_columns(df)
-            df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
-
-            # 刷新缓存索引
-            self.html_cache.refresh_cache_index()
+            logger.info("从数据库加载URL数据")
+            url_records = self.db_manager.fetch_urls()
 
             # 创建任务列表
             tasks = []
-            for idx, row in df.iterrows():
-                # 如果提供了过滤函数，使用它决定是否处理此行
-                if filter_func is not None and not filter_func(row):
+            skipped_count = 0
+
+            for record in url_records:
+                url = record.get('source_url', '').strip()
+                if not url:  # 跳过无URL的记录
                     continue
 
-                url = row.get('person_url', '').strip()
-                if url:  # 确保有URL
-                    person_name = str(row.get('person_name', '')).strip()
-                    person_id = str(row.get('person_id', '')).strip()
+                person_name = str(record.get('person_name', '')).strip()
+                person_id = str(record.get('id', '')).strip()
 
-                    # 检查是否已缓存
-                    is_cached = self.html_cache.is_cached(person_name, person_id)
-                    html_path = ""
-                    if is_cached:
-                        html_path = self.html_cache.get_cache_path(person_name, person_id)
+                # 检查是否已有HTML内容
+                if filter_existing and person_id.isdigit():
+                    leader_id = int(person_id)
+                    if self.db_manager.check_html_exists(leader_id):
+                        skipped_count += 1
+                        continue
 
-                    # 更新DataFrame中的缓存状态
-                    df.at[idx, 'html_cached'] = 'Y' if is_cached else 'N'
-                    if html_path:
-                        df.at[idx, 'html_path'] = html_path
+                # 创建任务
+                task = ProcessorTask(
+                    idx=int(person_id) if person_id.isdigit() else 0,
+                    url=url,
+                    person_name=person_name,
+                    person_id=person_id,
+                    data=dict(record),
+                    cached=False
+                )
+                tasks.append(task)
 
-                    task = ProcessorTask(
-                        idx=idx,
-                        url=url,
-                        person_name=person_name,
-                        person_id=person_id,
-                        data=dict(row),
-                        cached=is_cached,
-                        html_path=html_path
-                    )
-                    tasks.append(task)
-
-            # 保存更新后的DataFrame
-            df = self._reorder_columns(df)
-            df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
-
-            logger.info(f"共加载 {len(tasks)} 个任务，已缓存 {sum(1 for t in tasks if t.cached)} 个")
+            logger.info(f"共加载 {len(tasks)} 个需要爬取的任务，跳过 {skipped_count} 个已有内容的记录")
             return tasks
 
         except Exception as e:
-            logger.error(f"加载CSV文件时出错: {str(e)}")
+            logger.error(f"从数据库加载URL数据时出错: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return []
@@ -224,32 +199,21 @@ class DataProcessor:
 
         return chunks
 
-    def process_fetch_stage(self, filter_func: Optional[Callable[[pd.Series], bool]] = None):
+    def process_db_fetch_stage(self):
         """
-        执行爬取阶段，仅爬取HTML不进行解析
-
-        Args:
-            filter_func: 过滤函数，决定哪些行需要处理
+        执行爬取阶段，从数据库读取URL，爬取HTML并存储到数据库
         """
         try:
             self.start_time = time.time()
 
-            # 加载任务
-            all_tasks = self.load_tasks_from_csv(filter_func)
-            if not all_tasks:
-                logger.warning("没有任务需要处理")
-                return
-
-            # 过滤出未缓存的任务
-            tasks = [task for task in all_tasks if not task.cached]
+            # 从数据库加载任务
+            tasks = self.load_tasks_from_db()
             if not tasks:
-                logger.info("所有任务都已有缓存，无需爬取")
+                logger.warning("没有任务需要处理")
                 return
 
             self.total_count = len(tasks)
             logger.info(f"准备爬取 {self.total_count} 个任务")
-
-            # 其余处理与原来类似，但生产者函数改为only_fetch_producer
 
             # 分割任务
             task_chunks = self.split_tasks(tasks)
@@ -258,7 +222,7 @@ class DataProcessor:
             consumers = []
             logger.info(f"启动 {self.num_consumers} 个消费者线程")
             for i in range(self.num_consumers):
-                t = threading.Thread(target=self.fetch_consumer, args=(i,), daemon=True)
+                t = threading.Thread(target=self.db_fetch_consumer, args=(i,), daemon=True)
                 t.start()
                 consumers.append(t)
 
@@ -307,25 +271,27 @@ class DataProcessor:
                 f"HTML爬取阶段完成，共处理 {self.processed_count} 条记录，成功: {self.success_count}, 失败: {self.failure_count}, 重试: {self.retry_count}")
             logger.info(f"总耗时: {elapsed_time:.2f} 秒")
 
-            # 刷新缓存索引
-            self.html_cache.refresh_cache_index()
+            # 关闭数据库连接
+            if hasattr(self, 'db_manager'):
+                self.db_manager.close()
 
         except Exception as e:
             logger.error(f"处理数据时出现未捕获的异常: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
 
-    def fetch_consumer(self, consumer_id: int):
+            # 确保数据库连接关闭
+            if hasattr(self, 'db_manager'):
+                self.db_manager.close()
+
+    def db_fetch_consumer(self, consumer_id: int):
         """
-        爬取阶段的消费者函数，处理爬取结果并更新CSV文件
+        爬取阶段的消费者函数，处理爬取结果并更新数据库
 
         Args:
             consumer_id: 消费者ID
         """
         logger.info(f"爬取消费者 {consumer_id} 开始工作")
-
-        # 读取原始数据
-        original_df = pd.read_csv(self.input_csv_path, encoding='utf-8-sig')
 
         save_counter = 0  # 记录处理了多少条结果
 
@@ -343,48 +309,39 @@ class DataProcessor:
                 try:
                     # 提取任务和结果信息
                     task = result["task"]
-                    idx = task.idx
+                    leader_id = int(task.person_id) if task.person_id.isdigit() else None
                     success = result["success"]
-                    stage = result.get("stage", "fetch")
+                    html_content = result.get("fetch_result", {}).get("html_content", "")
 
-                    # 确保是爬取阶段的结果
-                    if stage != "fetch":
-                        logger.warning(f"爬取消费者 {consumer_id} 收到非爬取阶段结果: {stage}")
-                        continue
-
-                    # 更新DataFrame中对应行的数据
-                    with self.result_lock:
-                        if success:
-                            # 更新HTML缓存状态
-                            html_path = result.get("html_path", "")
-                            if html_path and os.path.exists(html_path):
-                                original_df.at[idx, 'html_cached'] = 'Y'
-                                original_df.at[idx, 'html_path'] = html_path
+                    if success and html_content and leader_id:
+                        # 再次检查数据库中是否已有内容（可能其他线程已经处理过）
+                        if not self.db_manager.check_html_exists(leader_id):
+                            # 将HTML内容更新到数据库
+                            success = self.db_manager.update_html_content(leader_id, html_content)
+                            if success:
                                 with self.task_lock:
                                     self.success_count += 1
+                                    logger.info(f"成功更新ID为 {leader_id} 的HTML内容")
                             else:
-                                logger.warning(f"爬取成功但HTML文件不存在: {html_path}")
-                                original_df.at[idx, 'html_cached'] = 'N'
                                 with self.task_lock:
                                     self.failure_count += 1
+                                    logger.error(f"更新ID为 {leader_id} 的HTML内容失败")
                         else:
-                            # 标记爬取失败
-                            original_df.at[idx, 'html_cached'] = 'N'
-                            with self.task_lock:
-                                self.failure_count += 1
+                            logger.info(f"跳过更新ID为 {leader_id} 的记录，因为已有HTML内容")
+                    else:
+                        with self.task_lock:
+                            self.failure_count += 1
+                            if leader_id:
+                                logger.error(f"处理ID为 {leader_id} 的记录失败，无法获取HTML内容")
 
-                        # 处理计数器增加
-                        save_counter += 1
+                    # 处理计数器增加
+                    save_counter += 1
 
-                        # 定期保存到CSV
-                        if save_counter >= self.save_interval or self.result_queue.empty():
-                            original_df = self._reorder_columns(original_df)
-                            original_df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
-                            logger.info(
-                                f"爬取消费者 {consumer_id} 已保存更新到CSV，成功: {self.success_count}, 失败: {self.failure_count}")
-                            save_counter = 0
-
-                    logger.info(f"爬取消费者 {consumer_id} 已处理结果: {idx}, 成功: {success}")
+                    # 定期输出进度信息
+                    if save_counter >= self.save_interval:
+                        logger.info(
+                            f"爬取消费者 {consumer_id} 已处理 {save_counter} 个结果，成功: {self.success_count}, 失败: {self.failure_count}")
+                        save_counter = 0
 
                 except Exception as e:
                     logger.error(f"爬取消费者 {consumer_id} 处理结果时出错: {str(e)}")
@@ -395,12 +352,6 @@ class DataProcessor:
 
             except Exception as e:
                 logger.error(f"爬取消费者 {consumer_id} 循环中出错: {str(e)}")
-
-        # 确保最后保存一次
-        with self.result_lock:
-            original_df = self._reorder_columns(original_df)
-            original_df.to_csv(self.input_csv_path, index=False, encoding='utf-8-sig')
-            logger.info(f"爬取消费者 {consumer_id} 最终保存，成功: {self.success_count}, 失败: {self.failure_count}")
 
         logger.info(f"爬取消费者 {consumer_id} 结束工作")
 

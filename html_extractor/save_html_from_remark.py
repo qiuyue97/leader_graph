@@ -28,11 +28,11 @@ DB_CONFIG = {
 }
 
 # 固定配置
-DB_TABLE = "c_org_info"
+DB_TABLE = "c_org_leader_info"
 REMARK_FIELD = "remark"
 ID_FIELD = "id"
-NAME_FIELD = "org_name"
-OUTPUT_DIR = "./data/html_dump"
+NAME_FIELD = "leader_name"
+OUTPUT_DIR = "../data/person_data_pc"
 
 
 class HtmlDumper:
