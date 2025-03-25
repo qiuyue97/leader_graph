@@ -261,7 +261,7 @@ def get_database_connection(config):
         raise
 
 
-def insert_or_update_leader(conn, leader_data):
+def insert_or_update_leader(conn, leader_data, org_name):
     """向数据库插入或更新领导信息"""
     try:
         with conn.cursor() as cursor:
@@ -271,35 +271,40 @@ def insert_or_update_leader(conn, leader_data):
             existing_leader = cursor.fetchone()
 
             if existing_leader:
-                # 已存在，需要更新组织信息
+                # 处理组织ID和UUID
                 org_info_id_list = str(existing_leader['org_info_id']).split(',')
                 org_info_uuid_list = str(existing_leader['org_info_uuid']).split(',')
 
-                # 检查新的org_info_id是否需要添加
+                # 新增：处理组织名称
+                org_name_list = str(existing_leader['org_name']).split(',') if existing_leader['org_name'] else []
+
+                # 更新逻辑...
                 if str(leader_data['org_info_id']) not in org_info_id_list:
                     org_info_id_list.append(str(leader_data['org_info_id']))
 
-                # 检查新的org_info_uuid是否需要添加
                 if leader_data['org_info_uuid'] not in org_info_uuid_list:
                     org_info_uuid_list.append(leader_data['org_info_uuid'])
 
-                # 更新记录
+                # 新增：同样处理组织名称
+                if org_name not in org_name_list:
+                    org_name_list.append(org_name)
+
+                # 修改 UPDATE 语句，加入 org_name 字段
                 sql_update = """
                 UPDATE c_org_leader_info 
-                SET org_info_id = %s, org_info_uuid = %s
+                SET org_info_id = %s, org_info_uuid = %s, org_name = %s
                 WHERE uuid = %s
                 """
                 cursor.execute(
                     sql_update,
-                    (','.join(org_info_id_list), ','.join(org_info_uuid_list), leader_data['uuid'])
+                    (','.join(org_info_id_list), ','.join(org_info_uuid_list), ','.join(org_name_list),
+                     leader_data['uuid'])
                 )
-                conn.commit()
-                print(f"更新领导 {leader_data['leader_name']} 的组织信息")
             else:
-                # 不存在，插入新记录
+                # 修改 INSERT 语句，加入 org_name 字段
                 sql_insert = """
-                INSERT INTO c_org_leader_info (uuid, org_info_id, org_info_uuid, leader_name, source_url)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO c_org_leader_info (uuid, org_info_id, org_info_uuid, leader_name, source_url, org_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """
                 cursor.execute(
                     sql_insert,
@@ -308,7 +313,8 @@ def insert_or_update_leader(conn, leader_data):
                         leader_data['org_info_id'],
                         leader_data['org_info_uuid'],
                         leader_data['leader_name'],
-                        leader_data['source_url']
+                        leader_data['source_url'],
+                        org_name
                     )
                 )
                 conn.commit()
@@ -344,6 +350,19 @@ def get_processed_org_ids(conn):
 
 def process_database_records(conn, limit=None, offset=0):
     """从数据库中处理记录，提取领导信息"""
+
+    def get_org_name(conn, org_id):
+        """获取组织名称"""
+        try:
+            with conn.cursor() as cursor:
+                sql = "SELECT org_name FROM c_org_info WHERE id = %s"
+                cursor.execute(sql, (org_id,))
+                result = cursor.fetchone()
+                return result['org_name'] if result else "未知组织"
+        except Exception as e:
+            print(f"获取组织名称时出错: {e}")
+            return "未知组织"
+
     # 初始化提取器
     extractor = LeaderExtractor()
 
@@ -395,7 +414,7 @@ def process_database_records(conn, limit=None, offset=0):
                 # 存储到数据库
                 if leaders:
                     for leader in leaders:
-                        insert_or_update_leader(conn, leader)
+                        insert_or_update_leader(conn, leader, org_name)
                     print(f"成功处理组织 {org_name} 的 {len(leaders)} 位领导")
                 else:
                     print(f"未找到组织 {org_name} 的领导信息")
