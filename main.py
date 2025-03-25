@@ -10,8 +10,8 @@ from utils.logger import setup_logger
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='百度百科爬虫和解析工具')
-    parser.add_argument('--stage', type=str, default='parse', choices=['fetch', 'parse', 'full'],
-                        help='处理阶段: fetch(仅爬取), parse(仅解析), full(完整流程)')
+    parser.add_argument('--stage', type=str, default='db_fetch', choices=['fetch', 'parse', 'full', 'db_fetch'],
+                        help='处理阶段: fetch(仅爬取), parse(仅解析), full(完整流程), db_fetch(从数据库爬取)')
     args = parser.parse_args()
 
     # 设置日志
@@ -69,7 +69,7 @@ def main():
 
         # 初始化数据处理器
         processor = DataProcessor(
-            input_csv_path=config.input_csv_path,
+            config=config,  # 传递整个配置对象
             proxy_pool=proxy_pool,
             num_producers=config.num_producers,
             num_consumers=config.num_consumers,
@@ -79,7 +79,12 @@ def main():
         )
 
         # 根据指定的阶段执行相应的处理
-        if args.stage == 'fetch' or args.stage == 'full':
+        if args.stage == 'db_fetch':
+            logger.info("开始执行从数据库爬取阶段...")
+            processor.process_db_fetch_stage()
+            logger.info("从数据库爬取阶段完成")
+
+        elif args.stage == 'fetch' or args.stage == 'full':
             logger.info("开始执行爬取阶段...")
             processor.process_fetch_stage()
             logger.info("爬取阶段完成")

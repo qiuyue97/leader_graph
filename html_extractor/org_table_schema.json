@@ -1,0 +1,14 @@
+{
+    "org_name": ["中文名"],
+    "org_name_en": ["外文名"],
+    "org_abbr": ["简称"],
+    "org_alias": ["别名"],
+    "aff_org": ["隶属"],
+    "parent_org": ["上级机关", "上级机构"],
+    "sup_org" : ["主管部门", "主管单位"],
+    "establish_date": ["成立时间"],
+    "office_addr": ["办公地址"],
+    "org_nature": ["性质"],
+    "adm_level": ["行政级别"],
+    "current_leader": ["现任领导", "市长", "主任"]
+}

@@ -19,21 +19,7 @@ logger = get_logger(__name__)
 
 
 class SeleniumScraper:
-    """包装 Selenium WebDriver 的爬虫类，支持代理和移动设备模拟"""
-
-    # 常见的安卓设备 User-Agent 列表
-    ANDROID_USER_AGENTS = [
-        # 三星 Galaxy S21
-        "Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.105 Mobile Safari/537.36",
-        # 谷歌 Pixel 5
-        "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36",
-        # OPPO Find X3
-        "Mozilla/5.0 (Linux; Android 11; PCAM00) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.105 Mobile Safari/537.36",
-        # 小米 11
-        "Mozilla/5.0 (Linux; Android 11; M2011K2C) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.105 Mobile Safari/537.36",
-        # 华为 P40
-        "Mozilla/5.0 (Linux; Android 10; ELS-AN00) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.93 Mobile Safari/537.36"
-    ]
+    """包装 Selenium WebDriver 的爬虫类，支持代理"""
 
     def __init__(self, proxy: Optional[Dict[str, str]] = None, headless: bool = True,
                  mobile: bool = True, page_load_timeout: int = 30,
@@ -85,33 +71,13 @@ class SeleniumScraper:
         # 禁用图像以彻底解决libpng警告（如果不需要处理图像）
         self.options.add_argument('--blink-settings=imagesEnabled=false')
 
-        # 移动设备模拟
+        # 修改为统一使用桌面版用户代理
+        self.options.add_argument(
+            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36')
+
+        # 移除移动设备模拟相关代码
         if self.mobile:
-            selected_ua = random.choice(self.ANDROID_USER_AGENTS)
-            self.options.add_argument(f'--user-agent={selected_ua}')
-
-            # 设置移动设备参数
-            mobile_emulation = {
-                "deviceMetrics": {"width": 360, "height": 740, "pixelRatio": 3.0},
-                "userAgent": selected_ua
-            }
-            self.options.add_experimental_option("mobileEmulation", mobile_emulation)
-
-            # 设置移动设备特性
-            self.options.add_argument("--enable-features=NetworkService,NetworkServiceInProcess")
-            self.options.add_argument("--force-device-scale-factor=2.0")
-        else:
-            # 非移动设备，使用随机 UA
-            if has_fake_useragent:
-                try:
-                    ua = UserAgent()
-                    self.options.add_argument(f'--user-agent={ua.random}')
-                except Exception as e:
-                    logger.warning(f"无法设置随机UA: {str(e)}")
-                    # 如果失败，使用默认 UA
-            else:
-                # fake_useragent 不可用，使用默认 Chrome UA
-                logger.info("fake_useragent 不可用，使用默认 Chrome UA")
+            logger.info("使用桌面版用户代理，忽略移动设备模拟设置")
 
         try:
             self.driver = webdriver.Chrome(options=self.options)
