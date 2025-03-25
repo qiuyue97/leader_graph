@@ -1,0 +1,12 @@
+{
+    "gender": ["性别"],
+    "nationality": ["国籍"],
+    "ethnic_group": ["民族"],
+    "birth_place": ["籍贯"],
+    "birth_date": ["出生日期"],
+    "alma_mater": ["毕业院校"],
+    "degree": ["学位"],
+    "edu_level": ["学历"],
+    "political_status": ["政治面貌"],
+    "professional_title": ["职称"]
+}

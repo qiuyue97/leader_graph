@@ -215,15 +215,18 @@ class BaiduBaikeExtractor:
             return False
 
     def extract_from_html(self, html_content):
-        """从HTML内容中提取标题、简介和内容结构"""
+        """从HTML内容中提取标题、描述、简介和内容结构"""
         if not html_content:
-            return {"title": "", "summary": "", "sections": []}
+            return {"title": "", "description": "", "summary": "", "sections": []}
 
         # 使用BeautifulSoup解析HTML
         soup = BeautifulSoup(html_content, 'html.parser')
 
         # 提取主标题
         main_title = self._extract_main_title(soup)
+
+        # 提取描述信息
+        description = self._extract_description(soup)
 
         # 提取简介内容
         summary = self._extract_summary(soup)
@@ -237,6 +240,7 @@ class BaiduBaikeExtractor:
 
         return {
             "title": main_title,
+            "description": description,
             "summary": summary,
             "sections": sections
         }
@@ -309,6 +313,29 @@ class BaiduBaikeExtractor:
                 summary_text = "\n\n".join(paragraphs)
 
         return summary_text
+
+    def _extract_description(self, soup):
+        """提取百科页面的描述信息"""
+        description_text = ""
+
+        # 尝试查找lemmaDescText_BItKh类的元素
+        desc_element = soup.find('div', class_='lemmaDescText_BItKh')
+        if desc_element:
+            description_text = self._clean_text(desc_element.text)
+
+        # 如果没有找到，尝试查找lemmaDesc类
+        if not description_text:
+            desc_element = soup.find('div', class_='lemmaDesc')
+            if desc_element:
+                description_text = self._clean_text(desc_element.text)
+
+        # 再尝试查找lemmadesc-nt1jK类
+        if not description_text:
+            desc_element = soup.find('div', class_='lemmaDesc_nt1jK')
+            if desc_element:
+                description_text = self._clean_text(desc_element.text)
+
+        return description_text
 
     def _extract_content_structure(self, content_div):
         """提取内容结构，包括标题和段落"""
@@ -844,6 +871,10 @@ class BaiduBaikeExtractor:
     def _map_extraction_to_fields(self, extraction_result: Dict) -> Dict[str, str]:
         """将提取结果映射到数据库字段"""
         mapped_fields = {}
+
+        # 处理description映射到person_title
+        if extraction_result.get('description'):
+            mapped_fields['person_title'] = extraction_result['description']
 
         # 处理summary单独映射到org_profile
         if extraction_result.get('summary'):
