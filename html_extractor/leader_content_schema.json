@@ -1,0 +1,16 @@
+{
+    "career_history": [
+            "人物履历", "人物简介", "人物经历", "主要经历",
+            "工作经历", "个人经历", "履历", "经历", "简历",
+            "工作生涯", "简介"
+        ],
+    "held_position": ["担任职务"],
+    "position_change": ["职务任免"],
+    "work_division": ["工作分工"],
+    "leader_honor": ["所获荣誉", "人物荣誉"],
+    "published_book": ["出版图书"],
+    "research_project": ["科研项目"],
+    "written_work": ["人物著作"],
+    "social_position": ["社会兼职"],
+    "achievement": ["人物成就"]
+}
