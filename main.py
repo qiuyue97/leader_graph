@@ -6,7 +6,6 @@ from proxy.pool import ProxyPool
 from processor.data_processor import DataProcessor, ProcessStage
 from utils.logger import setup_logger
 
-
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='百度百科爬虫和解析工具')
