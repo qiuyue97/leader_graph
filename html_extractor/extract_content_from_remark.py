@@ -141,14 +141,8 @@ except ImportError:
                     """
                     self.cursor.execute(check_query, (field_name,))
                     if not self.cursor.fetchone():
-                        logger.warning(f"字段'{field_name}'不存在，尝试创建...")
-                        # 添加字段
-                        alter_query = f"""
-                        ALTER TABLE c_org_info ADD COLUMN {field_name} TEXT COMMENT '从HTML提取的{field_name}'
-                        """
-                        self.cursor.execute(alter_query)
-                        self.connection.commit()
-                        logger.info(f"成功创建字段: {field_name}")
+                        logger.warning(f"字段'{field_name}'不存在于数据库中")
+                        return True
 
                     # 更新字段值
                     update_query = f"""
