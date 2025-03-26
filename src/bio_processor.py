@@ -1,21 +1,19 @@
 """
-bio_processor_threaded.py
-从CSV读取人物履历数据，使用多线程调用GPT-4o进行处理，并生成JSON文件
+bio_processor_mysql.py
+从MySQL数据库读取人物履历数据，使用多线程调用GPT-4o进行处理，并将结构化结果存回数据库
 """
 
 import os
-import csv
-import json
+import time
 import logging
 import threading
-import queue
-import time
-from typing import Dict, Any, List
+import json
+import random
+from typing import Dict, Any, List, Optional, Tuple
 from openai import AzureOpenAI
 import openai
-from pathlib import Path
+import pymysql
 from concurrent.futures import ThreadPoolExecutor
-import random
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config.settings import Config
@@ -25,7 +23,7 @@ from schema import BiographicalEvents
 
 # 设置日志
 logging.basicConfig(
-    level=logging.WARNING,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("../logs/bio_processing.log"),
@@ -42,7 +40,7 @@ class BiographicalDataProcessor:
                  azure_endpoint: str,
                  api_key: str,
                  api_version: str = "2024-10-21",
-                 result_dir: str = "result",
+                 db_config: Dict[str, str] = None,
                  max_threads: int = 10,
                  request_rate: int = 8,  # 每秒请求数，低于限制
                  token_limit: int = 90000):  # 每分钟令牌数，留出余量
@@ -53,7 +51,7 @@ class BiographicalDataProcessor:
             azure_endpoint: Azure OpenAI的端点URL
             api_key: Azure OpenAI的API密钥
             api_version: API版本
-            result_dir: 结果文件保存目录，默认为"result"
+            db_config: 数据库配置，包含host、user、password、database
             max_threads: 最大线程数，默认为10
             request_rate: 每秒最大请求数，默认为8
             token_limit: 每分钟最大令牌数，默认为90000
@@ -61,13 +59,10 @@ class BiographicalDataProcessor:
         self.azure_endpoint = azure_endpoint
         self.api_key = api_key
         self.api_version = api_version
+        self.db_config = db_config or {}
 
         # 每个线程使用独立的客户端实例
         self.clients = {}
-
-        # 确保结果目录存在
-        self.result_dir = Path(result_dir)
-        self.result_dir.mkdir(exist_ok=True, parents=True)
 
         # 多线程和速率限制相关设置
         self.max_threads = max_threads
@@ -86,7 +81,63 @@ class BiographicalDataProcessor:
         self.success_count = 0
         self.error_count = 0
 
-        logger.info(f"初始化完成，使用{max_threads}个线程，结果将保存至 {self.result_dir.absolute()}")
+        logger.info(f"初始化完成，使用{max_threads}个线程")
+
+    def get_database_connection(self):
+        """创建MySQL数据库连接"""
+        try:
+            connection = pymysql.connect(
+                host=self.db_config['host'],
+                user=self.db_config['user'],
+                password=self.db_config['password'],
+                database=self.db_config['database'],
+                charset='utf8mb4',
+                cursorclass=pymysql.cursors.DictCursor
+            )
+            logger.info(f"成功连接到数据库: {self.db_config['database']}")
+            return connection
+        except Exception as e:
+            logger.error(f"连接数据库时出错: {e}")
+            return None
+
+    def close_database_connection(self, connection):
+        """关闭数据库连接"""
+        if connection:
+            connection.close()
+            logger.info("数据库连接已关闭")
+
+    def check_career_history_structured_column(self):
+        """检查career_history_structured字段是否存在，不存在则创建"""
+        conn = self.get_database_connection()
+        if not conn:
+            return False
+
+        try:
+            with conn.cursor() as cursor:
+                # 检查字段是否存在
+                cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_schema = %s AND table_name = 'c_org_leader_info' 
+                AND column_name = 'career_history_structured'
+                """, (self.db_config['database'],))
+
+                if not cursor.fetchone():
+                    # 字段不存在，创建字段
+                    cursor.execute("""
+                    ALTER TABLE c_org_leader_info 
+                    ADD COLUMN career_history_structured TEXT COMMENT '结构化的履历数据（JSON格式）'
+                    """)
+                    conn.commit()
+                    logger.info("成功创建 career_history_structured 字段")
+                else:
+                    logger.info("career_history_structured 字段已存在")
+                return True
+
+        except Exception as e:
+            logger.error(f"检查/创建字段时出错: {e}")
+            return False
+        finally:
+            self.close_database_connection(conn)
 
     def get_client(self):
         """为当前线程获取或创建OpenAI客户端"""
@@ -242,181 +293,272 @@ class BiographicalDataProcessor:
             logger.error(f"线程 {threading.get_ident()} API调用出错: {str(e)}")
             return {"events": []}
 
-    def process_item(self, row, row_num):
-        """处理单个人物的履历数据项"""
+    def process_leader(self, leader: Dict) -> bool:
+        """处理单个领导人的履历数据并更新到数据库
+
+        Args:
+            leader: 领导人数据字典，包含id、leader_name和career_history等字段
+
+        Returns:
+            处理是否成功
+        """
         try:
-            logger.info(f"线程 {threading.get_ident()} 正在处理第{row_num}行: {row['person_name']}({row['person_id']})")
+            logger.info(f"处理ID={leader['id']}的领导人: {leader['leader_name']}")
 
             # 提取履历信息
-            bio_text = row.get('person_bio_raw', '')
-            if not bio_text:
-                logger.warning(f"线程 {threading.get_ident()} 第{row_num}行履历信息为空，跳过处理")
-                return False
-
-            # 生成文件名并避免文件名中的非法字符
-            safe_name = ''.join(c for c in row.get('person_name', 'unknown') if c.isalnum() or c in ' _-')
-            filename = f"{safe_name}_{row.get('person_id', 'unknown')}.json"
-            file_path = self.result_dir / filename
-
-            # 检查目标文件是否已存在
-            if file_path.exists():
-                try:
-                    # 读取现有文件
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        existing_data = json.load(f)
-
-                    # 检查events是否为空
-                    if existing_data.get('events') and len(existing_data.get('events')) > 0:
-                        logger.info(f"线程 {threading.get_ident()} 跳过第{row_num}行: 文件已存在且events不为空")
-
-                        # 更新统计信息
-                        with self.stats_lock:
-                            self.processed_count += 1
-                            self.success_count += 1
-
-                        return True
-                    else:
-                        logger.info(f"线程 {threading.get_ident()} 第{row_num}行: 文件已存在但events为空，重新处理")
-                except (json.JSONDecodeError, FileNotFoundError) as e:
-                    logger.warning(f"线程 {threading.get_ident()} 第{row_num}行: 读取现有文件出错，重新处理: {e}")
-            else:
-                logger.info(f"线程 {threading.get_ident()} 第{row_num}行: 开始处理")
+            bio_text = leader.get('career_history', '')
+            # 增强检查，确保career_history不为空且有实际内容
+            if not bio_text or bio_text.strip() == '':
+                logger.warning(f"领导人ID={leader['id']}的履历信息为空，跳过处理")
+                # 更新统计信息，但不算作错误
+                with self.stats_lock:
+                    self.processed_count += 1
+                return True  # 返回True表示处理成功（跳过处理）
 
             # 调用GPT-4o进行结构化
             events_data = self.extract_biographical_events(bio_text)
 
-            # 创建完整的数据结构
-            result = {
-                "from": row.get("from", ""),
-                "person_id": row.get("person_id", ""),
-                "person_name": row.get("person_name", ""),
-                "person_url": row.get("person_url", ""),
-                "person_title": row.get("person_title", ""),
-                "person_summary": row.get("person_summary", ""),
-                "ethnicity": row.get("ethnicity", ""),
-                "native_place": row.get("native_place", ""),
-                "birth_date": row.get("birth_date", ""),
-                "alma_mater": row.get("alma_mater", ""),
-                "political_status": row.get("political_status", "")
-            }
+            # 如果events为空，记录警告并返回
+            if not events_data or not events_data.get("events"):
+                logger.warning(f"领导人ID={leader['id']}的履历信息结构化后events为空")
+                with self.stats_lock:
+                    self.error_count += 1
+                return False
 
-            # 添加events数据
-            result.update(events_data)
+            # 将JSON结构转为字符串
+            structured_json = json.dumps(events_data, ensure_ascii=False)
 
-            # 保存JSON文件
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
+            # 更新数据库
+            conn = self.get_database_connection()
+            if not conn:
+                logger.error("无法连接到数据库")
+                return False
 
-            logger.info(f"线程 {threading.get_ident()} 成功处理并保存: {file_path}")
+            try:
+                with conn.cursor() as cursor:
+                    # 检查是否已有结构化数据
+                    check_sql = """
+                    SELECT career_history_structured 
+                    FROM c_org_leader_info 
+                    WHERE id = %s AND career_history_structured IS NOT NULL AND career_history_structured != ''
+                    """
+                    cursor.execute(check_sql, (leader['id'],))
+                    existing = cursor.fetchone()
 
-            # 更新统计信息
-            with self.stats_lock:
-                self.processed_count += 1
-                self.success_count += 1
+                    if existing and existing['career_history_structured']:
+                        logger.info(f"领导人ID={leader['id']}已有结构化履历数据，跳过更新")
+                        with self.stats_lock:
+                            self.processed_count += 1
+                            self.success_count += 1
+                        return True
 
-            return True
+                    # 更新领导人的结构化履历数据
+                    sql = """
+                    UPDATE c_org_leader_info
+                    SET career_history_structured = %s,
+                        update_time = NOW()
+                    WHERE id = %s
+                    """
+                    cursor.execute(sql, (structured_json, leader['id']))
+                    conn.commit()
+
+                    logger.info(f"成功更新领导人ID={leader['id']}的结构化履历数据")
+
+                    # 更新统计信息
+                    with self.stats_lock:
+                        self.success_count += 1
+
+                    return True
+            except Exception as e:
+                logger.error(f"更新领导人ID={leader['id']}的结构化履历数据时出错: {str(e)}")
+                if conn:
+                    conn.rollback()
+                return False
+            finally:
+                self.close_database_connection(conn)
 
         except Exception as e:
-            logger.error(f"线程 {threading.get_ident()} 处理第{row_num}行时出错: {str(e)}")
+            logger.error(f"处理领导人ID={leader['id']}时出错: {str(e)}")
 
             # 更新统计信息
             with self.stats_lock:
-                self.processed_count += 1
                 self.error_count += 1
 
             return False
 
-    def process_csv(self, csv_path: str) -> None:
+    def get_leaders(self, limit: Optional[int] = None, skip_processed: bool = True) -> List[Dict]:
         """
-        处理CSV文件中的每一行数据
+        从数据库获取领导人列表
 
         Args:
-            csv_path: CSV文件路径
+            limit: 限制结果数量
+            skip_processed: 是否跳过已处理的记录
+
+        Returns:
+            领导人列表
         """
-        logger.info(f"开始处理CSV文件: {csv_path}")
+        conn = self.get_database_connection()
+        if not conn:
+            return []
 
         try:
-            # 读取CSV并预处理数据
-            rows = []
-            with open(csv_path, 'r', encoding='utf-8-sig') as csv_file:
-                reader = csv.DictReader(csv_file)
+            with conn.cursor() as cursor:
+                # 构建SQL查询，只获取有career_history且不为空的记录
+                if skip_processed:
+                    sql = """
+                    SELECT id, leader_name, career_history 
+                    FROM c_org_leader_info 
+                    WHERE career_history IS NOT NULL 
+                    AND career_history != '' 
+                    AND (career_history_structured IS NULL OR career_history_structured = '')
+                    AND is_deleted = 0
+                    """
+                else:
+                    sql = """
+                    SELECT id, leader_name, career_history 
+                    FROM c_org_leader_info 
+                    WHERE career_history IS NOT NULL 
+                    AND career_history != ''
+                    AND is_deleted = 0
+                    """
 
-                # 检查所需字段是否存在
-                required_fields = ["from", "person_id", "person_name", "person_url",
-                                  "person_title", "person_bio_raw", "person_summary",
-                                  "ethnicity", "native_place", "birth_date",
-                                  "alma_mater", "political_status"]
-                csv_fields = reader.fieldnames if reader.fieldnames else []
+                if limit is not None:
+                    sql += f" LIMIT {limit}"
 
-                missing_fields = [field for field in required_fields if field not in csv_fields]
-                if missing_fields:
-                    logger.error(f"CSV缺少必要字段: {', '.join(missing_fields)}")
-                    return
-
-                # 将所有行加载到内存
-                rows = list(reader)
-
-            total_rows = len(rows)
-            logger.info(f"CSV文件共有 {total_rows} 行数据")
-
-            # 使用线程池处理数据
-            start_time = time.time()
-            with ThreadPoolExecutor(max_workers=self.max_threads) as executor:
-                # 提交所有任务
-                future_to_row = {executor.submit(self.process_item, row, i+1): (row, i+1)
-                                for i, row in enumerate(rows)}
-
-                # 处理完成的任务
-                for future in future_to_row:
-                    row, row_num = future_to_row[future]
-                    try:
-                        success = future.result()
-                        if not success:
-                            logger.warning(f"第{row_num}行处理失败: {row.get('person_name', 'unknown')}")
-                    except Exception as exc:
-                        logger.error(f"处理第{row_num}行时发生异常: {exc}")
-
-            # 汇总统计
-            end_time = time.time()
-            process_time = end_time - start_time
-            skipped_count = total_rows - (self.success_count + self.error_count)
-            logger.info(f"CSV处理完成. 总行数: {total_rows}, 处理成功: {self.success_count}, "
-                        f"处理失败: {self.error_count}, 跳过处理: {skipped_count}, "
-                        f"总耗时: {process_time:.2f}秒, "
-                        f"平均每行耗时: {process_time/total_rows:.2f}秒")
+                cursor.execute(sql)
+                leaders = cursor.fetchall()
+                logger.info(f"从数据库获取了 {len(leaders)} 条领导人记录")
+                return leaders
 
         except Exception as e:
-            logger.error(f"处理CSV时出错: {str(e)}")
+            logger.error(f"从数据库获取领导人列表时出错: {str(e)}")
+            return []
+        finally:
+            self.close_database_connection(conn)
+
+    def process_leaders(self, limit: Optional[int] = None, skip_processed: bool = True) -> None:
+        """
+        处理多个领导人的履历数据
+
+        Args:
+            limit: 限制处理数量
+            skip_processed: 是否跳过已处理的记录
+        """
+        # 确保数据库表结构正确
+        if not self.check_career_history_structured_column():
+            logger.error("数据库表结构检查失败，退出处理")
+            return
+
+        # 获取领导人列表
+        leaders = self.get_leaders(limit, skip_processed)
+        if not leaders:
+            logger.warning("没有找到需要处理的领导人记录")
+            return
+
+        total_count = len(leaders)
+        self.processed_count = 0
+        self.success_count = 0
+        self.error_count = 0
+
+        logger.info(f"开始处理 {total_count} 条领导人记录")
+        start_time = time.time()
+
+        # 使用线程池处理
+        with ThreadPoolExecutor(max_workers=self.max_threads) as executor:
+            # 提交所有任务
+            futures = {executor.submit(self.process_leader, leader): leader for leader in leaders}
+
+            # 处理完成的任务
+            for future in futures:
+                leader = futures[future]
+                try:
+                    success = future.result()
+                    # 更新处理计数
+                    with self.stats_lock:
+                        self.processed_count += 1
+
+                    # 输出进度
+                    if self.processed_count % 10 == 0 or self.processed_count == total_count:
+                        elapsed = time.time() - start_time
+                        remaining = (elapsed / self.processed_count) * (total_count - self.processed_count) if self.processed_count > 0 else 0
+                        logger.info(f"进度: {self.processed_count}/{total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
+
+                except Exception as e:
+                    logger.error(f"处理领导人ID={leader['id']}时发生异常: {str(e)}")
+                    with self.stats_lock:
+                        self.processed_count += 1
+                        self.error_count += 1
+
+        # 打印最终统计
+        elapsed_time = time.time() - start_time
+        logger.info(f"处理完成. 总数: {total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 总耗时: {elapsed_time:.2f}秒, 平均耗时: {elapsed_time/total_count:.2f}秒/条")
 
 
 def main():
     """主函数"""
-    config_path = '../config.yaml'
-    config = Config.from_file(config_path)
+    import argparse
 
-    # 配置参数，推荐使用环境变量来存储敏感信息
-    AZURE_ENDPOINT = config.azure_openai_endpoint
-    API_KEY = config.azure_openai_api_key
-    CSV_PATH = "../data/shanghai_leadership_list.csv"
-    RESULT_DIR = "../data/result"
+    # 命令行参数
+    parser = argparse.ArgumentParser(description='从MySQL数据库处理领导人履历数据并结构化')
+    parser.add_argument('--limit', type=int, help='限制处理的记录数量')
+    parser.add_argument('--process-all', action='store_true', help='处理所有记录，包括已处理过的(默认只处理未处理的)')
+    parser.add_argument('--config', default='../config.yaml', help='配置文件路径')
+    parser.add_argument('--host', help='MySQL主机地址，优先级高于配置文件')
+    parser.add_argument('--user', help='MySQL用户名，优先级高于配置文件')
+    parser.add_argument('--password', help='MySQL密码，优先级高于配置文件')
+    parser.add_argument('--database', help='MySQL数据库名，优先级高于配置文件')
+    parser.add_argument('--threads', type=int, help='线程数量，优先级高于配置文件')
 
-    # 设置线程数和限制 - 根据Azure限制策略调整
-    MAX_THREADS = 10  # 根据计算得出的线程数
-    REQUEST_RATE = 8  # 每秒请求数，稍低于限制以留余量
-    TOKEN_LIMIT = 90000  # 每分钟令牌数，略低于限制
+    args = parser.parse_args()
+
+    # 从配置文件加载配置
+    try:
+        config = Config.from_file(args.config)
+        logger.info(f"从 {args.config} 加载配置")
+    except Exception as e:
+        logger.error(f"加载配置文件失败: {str(e)}，使用默认配置")
+        config = Config()
+
+    # 数据库配置
+    db_config = config.db_config.copy()
+
+    # 命令行参数优先于配置文件
+    if args.host:
+        db_config['host'] = args.host
+    if args.user:
+        db_config['user'] = args.user
+    if args.password:
+        db_config['password'] = args.password
+    if args.database:
+        db_config['database'] = args.database
+
+    # 线程配置
+    max_threads = args.threads if args.threads else config.ai_max_threads
+
+    # Azure OpenAI API 配置
+    azure_endpoint = config.azure_openai_endpoint
+    api_key = config.azure_openai_api_key
+    api_version = config.azure_openai_api_version
 
     # 创建处理器
     processor = BiographicalDataProcessor(
-        azure_endpoint=AZURE_ENDPOINT,
-        api_key=API_KEY,
-        result_dir=RESULT_DIR,
-        max_threads=MAX_THREADS,
-        request_rate=REQUEST_RATE,
-        token_limit=TOKEN_LIMIT
+        azure_endpoint=azure_endpoint,
+        api_key=api_key,
+        api_version=api_version,
+        db_config=db_config,
+        max_threads=max_threads,
+        request_rate=config.ai_request_rate,
+        token_limit=config.ai_token_limit
     )
 
-    # 处理CSV
-    processor.process_csv(CSV_PATH)
+    # 处理领导人履历数据
+    # 默认跳过已处理过的记录，除非明确指定--process-all参数
+    processor.process_leaders(
+        limit=args.limit,
+        skip_processed=True  # 始终跳过已处理的记录，忽略--process-all参数
+    )
+
+    logger.info("处理完成")
 
 
 if __name__ == "__main__":
