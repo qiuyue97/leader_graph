@@ -25,7 +25,7 @@ def create_org_leader_info_table():
         org_info_uuid VARCHAR(255) COMMENT '机构信息uuid,多个用逗号分隔',
         org_name VARCHAR(255) COMMENT '机构中文名,多个用逗号分隔',
         leader_name VARCHAR(100) COMMENT '领导姓名',
-        leader_position VARCHAR(255) COMMENT '职务',
+        leader_position TEXT COMMENT '职务',
         current_position TEXT COMMENT '现任职',
         leader_profile TEXT COMMENT '人物简介',
         gender VARCHAR(10) COMMENT '性别',
