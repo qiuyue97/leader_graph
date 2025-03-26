@@ -39,6 +39,7 @@ def create_org_leader_info_table():
         political_status VARCHAR(50) COMMENT '政治面貌',
         professional_title VARCHAR(100) COMMENT '职称',
         career_history TEXT COMMENT '人物履历',
+        career_history_structured TEXT COMMENT '结构化人物履历',
         held_position TEXT COMMENT '担任职务',
         position_change TEXT COMMENT '职务任免',
         work_division TEXT COMMENT '工作分工',
