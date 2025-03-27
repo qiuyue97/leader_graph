@@ -334,7 +334,7 @@ def insert_into_database(departments, db_config):
 def main():
     """主函数"""
     # 输入文件参数
-    input_file = "../data/input_江苏省_0325.xlsx"  # 输入文件路径
+    input_file = "../data/input_安徽省_0327.xlsx"  # 输入文件路径
     primary_col = "一级部门"  # 一级部门列名
     secondary_col = "二级部门"  # 二级部门列名
     province_col = "省份"  # 省份列名

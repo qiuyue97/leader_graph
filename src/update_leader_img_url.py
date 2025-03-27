@@ -148,7 +148,10 @@ class LeaderImageExtractor:
             soup = BeautifulSoup(html_content, 'html.parser')
 
             # 方法1: 首先尝试查找abstractAlbum类的div中的img元素
-            abstract_album = soup.find('div', class_='abstractAlbum_PajlS')
+            abstract_album = soup.find(
+                'div',
+                class_=lambda c: c and any(cls.startswith('abstractAlbum_') for cls in c.split())
+            )
             if abstract_album:
                 img = abstract_album.find('img')
                 if img and img.get('src'):
@@ -307,7 +310,7 @@ class LeaderImageExtractor:
             print(f"未找到领导人 {leader_name} 的图片URL")
             return False, None
 
-    def process_leaders(self, limit: Optional[int] = None, leader_id: Optional[int] = None, update_db: bool = False) -> \
+    def process_leaders(self, limit: Optional[int] = None, leader_id: Optional[int] = None, update_db: bool = True) -> \
     Dict[int, str]:
         """
         处理多个领导人的图片提取
@@ -367,7 +370,6 @@ def main():
     parser.add_argument('--database', default='cnfic_leader', help='MySQL数据库名')
     parser.add_argument('--limit', type=int, help='限制处理的领导人数量')
     parser.add_argument('--leader_id', type=int, help='指定领导人ID')
-    parser.add_argument('--update_db', action='store_true', help='是否更新到数据库')
     parser.add_argument('--output_file', help='输出结果到指定文件')
 
     args = parser.parse_args()
@@ -382,7 +384,7 @@ def main():
 
     # 创建提取器并处理
     extractor = LeaderImageExtractor(db_config)
-    results = extractor.process_leaders(args.limit, args.leader_id, args.update_db)
+    results = extractor.process_leaders(args.limit, args.leader_id)
 
     # 打印摘要
     print(f"\n提取完成! 总共处理了 {len(results)} 个领导人的图片URL")

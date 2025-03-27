@@ -266,27 +266,26 @@ class BaiduBaikeExtractor:
         """提取百科页面的简介内容"""
         summary_text = ""
         # 查找具有特定类名的简介div
-        summary_div = soup.select_one('div.lemmaSummary_s9vD3.J-summary')
+        summary_div = soup.select_one('div[class*="lemmaSummary_"][class*="J-summary"]')
 
         if summary_div:
-            # 提取所有text_tjAKh类的span元素
             paragraphs = []
 
             # 遍历所有段落
-            para_divs = summary_div.find_all('div', class_='para_WzwJ3')
+            para_divs = summary_div.find_all('div', class_=lambda c: c and 'para_' in c)
             for para_div in para_divs:
                 # 收集段落中所有文本元素
                 para_texts = []
 
                 # 处理所有类型为text_tjAKh的span
-                for span in para_div.find_all('span', class_='text_tjAKh'):
+                for span in para_div.find_all('span', class_=lambda c: c and 'text_' in c):
                     # 清理文本
                     span_text = self._clean_text(span.text)
                     if span_text:
                         para_texts.append(span_text)
 
                 # 提取和处理链接文本
-                for link in para_div.find_all('a', class_='innerLink_qJN0J'):
+                for link in para_div.find_all('a', class_=lambda c: c and 'innerLink_' in c):
                     link_text = self._clean_text(link.text)
                     if link_text and link_text not in " ".join(para_texts):
                         para_texts.append(link_text)
@@ -313,7 +312,7 @@ class BaiduBaikeExtractor:
         description_text = ""
 
         # 尝试查找lemmaDescText_BItKh类的元素
-        desc_element = soup.find('div', class_='lemmaDescText_BItKh')
+        desc_element = soup.find('div', class_=lambda c: c and 'lemmaDescText_' in c)
         if desc_element:
             description_text = self._clean_text(desc_element.text)
 
@@ -325,7 +324,7 @@ class BaiduBaikeExtractor:
 
         # 再尝试查找lemmadesc-nt1jK类
         if not description_text:
-            desc_element = soup.find('div', class_='lemmaDesc_nt1jK')
+            desc_element = soup.find('div', class_=lambda c: c and 'lemmaDesc_' in c)
             if desc_element:
                 description_text = self._clean_text(desc_element.text)
 
@@ -363,9 +362,7 @@ class BaiduBaikeExtractor:
             return sections
 
         # 如果没有找到带name属性的h2标签，尝试通过paraTitle_c7Isv类提取标题和内容
-        para_titles = content_div.select('div.paraTitle_c7Isv[data-level="1"]')
-        if not para_titles:
-            para_titles = content_div.select('div.paraTitle_c7Isv.level-1_gngtl')
+        para_titles = content_div.select('div[class*="paraTitle_"][class*="level-1_"][data-level="1"]')
 
         if para_titles:
             # 按照文档顺序排序
@@ -423,7 +420,7 @@ class BaiduBaikeExtractor:
 
         # 获取h2标签的父元素
         parent = h2_element.parent
-        if parent and parent.name == 'div' and 'paraTitle_c7Isv' in parent.get('class', []):
+        if parent and parent.name == 'div' and any(cls.startswith('paraTitle_') for cls in parent.get('class', [])):
             # h2在paraTitle_c7Isv中，处理后续的兄弟元素
             current_element = parent.next_sibling
 
@@ -439,8 +436,8 @@ class BaiduBaikeExtractor:
                 if current_element.name == 'div':
                     # 检查是否是段落
                     if current_element.get('class') and (
-                            'para_WzwJ3' in current_element.get('class') or 'content_XwoLS' in current_element.get(
-                            'class')):
+                            any(cls.startswith('para_') for cls in current_element.get('class', [])) or
+                            any(cls.startswith('content_') for cls in current_element.get('class', []))):
                         para_text = self._clean_text(current_element.text)
                         if para_text:
                             paragraphs.append(para_text)
@@ -458,7 +455,7 @@ class BaiduBaikeExtractor:
                             paragraphs.append(table_text)
 
                     # 检查是否是二级标题
-                    elif current_element.get('class') and 'paraTitle_c7Isv' in current_element.get('class') and (
+                    elif current_element.get('class') and (any(cls.startswith('paraTitle_') for cls in current_element.get('class', []))) and (
                             'level-2' in ' '.join(current_element.get('class')) or current_element.get(
                         'data-level') == '2'):
                         # 提取二级标题文本
@@ -492,7 +489,8 @@ class BaiduBaikeExtractor:
                 # 检查是否为段落
                 if elem.name == 'div':
                     if elem.get('class') and (
-                            'para_WzwJ3' in elem.get('class') or 'content_XwoLS' in elem.get('class')):
+                            any(cls.startswith('para_') for cls in elem.get('class', [])) or
+                            any(cls.startswith('content_') for cls in elem.get('class', []))):
                         para_text = self._clean_text(elem.text)
                         if para_text:
                             paragraphs.append(para_text)
@@ -510,7 +508,7 @@ class BaiduBaikeExtractor:
                             paragraphs.append(table_text)
 
                     # 检查是否为二级标题
-                    elif elem.get('class') and 'paraTitle_c7Isv' in elem.get('class') and (
+                    elif elem.get('class') and any(cls.startswith('paraTitle_') for cls in elem.get('class', [])) and (
                             'level-2' in ' '.join(elem.get('class')) or elem.get('data-level') == '2'):
                         sub_h2 = elem.find('h2')
                         subheading = self._clean_text(sub_h2.text) if sub_h2 else self._clean_text(elem.text)
@@ -552,8 +550,8 @@ class BaiduBaikeExtractor:
             # 检查是否为段落div
             if current_element.name == 'div':
                 if current_element.get('class') and (
-                        'para_WzwJ3' in current_element.get('class') or 'content_XwoLS' in current_element.get(
-                        'class')):
+                        any(cls.startswith('para_') for cls in current_element.get('class', [])) or
+                        any(cls.startswith('content_') for cls in current_element.get('class', []))):
                     para_text = self._clean_text(current_element.text)
                     if para_text:
                         paragraphs.append(para_text)
@@ -571,7 +569,7 @@ class BaiduBaikeExtractor:
                         paragraphs.append(table_text)
 
                 # 检查是否为二级标题
-                elif current_element.get('class') and 'paraTitle_c7Isv' in current_element.get('class') and (
+                elif current_element.get('class') and any(cls.startswith('paraTitle_') for cls in current_element.get('class', [])) and (
                         'level-2' in ' '.join(current_element.get('class')) or current_element.get(
                     'data-level') == '2'):
                     # 提取二级标题文本
@@ -595,15 +593,15 @@ class BaiduBaikeExtractor:
 
                         # 检查是否为下一个二级标题
                         if sub_element.name == 'div' and sub_element.get(
-                                'class') and 'paraTitle_c7Isv' in sub_element.get('class', []) and (
+                                'class') and any(cls.startswith('paraTitle_') for cls in sub_element.get('class', [])) and (
                                 'level-2' in ' '.join(sub_element.get('class', [])) or sub_element.get(
                             'data-level') == '2'):
                             break
 
                         # 提取段落内容
                         if sub_element.name == 'div' and sub_element.get('class') and (
-                                'para_WzwJ3' in sub_element.get('class', []) or 'content_XwoLS' in sub_element.get(
-                            'class', [])):
+                                any(cls.startswith('para_') for cls in sub_element.get('class', [])) or
+                                any(cls.startswith('content_') for cls in sub_element.get('class', []))):
                             sub_text = self._clean_text(sub_element.text)
                             if sub_text:
                                 paragraphs.append(sub_text)
@@ -660,7 +658,12 @@ class BaiduBaikeExtractor:
 
         # 如果没有找到表格，检查特殊的模块
         if not tables and element.get('data-module-type') == 'table':
-            module_tables = element.select('div.moduleTable_ieSLV table, table.tableBox_kVyoj')
+            module_tables = [
+                table for table in element.select('div table, table')
+                if
+                table.find_parent('div', class_=lambda c: c and any(cls.startswith('moduleTable_') for cls in c.split()))
+                or any(cls.startswith('tableBox_') for cls in table.get('class', []))
+            ]
             if module_tables:
                 tables = module_tables
 
@@ -688,7 +691,10 @@ class BaiduBaikeExtractor:
                     cell_content = ""
 
                     # 检查是否有带类的内容
-                    text_spans = cell.select('span.text_tjAKh')
+                    text_spans = [
+                        span for span in cell.select('span')
+                        if any(cls.startswith('text_') for cls in span.get('class', []))
+                    ]
                     if text_spans:
                         span_texts = []
                         for span in text_spans:
@@ -698,7 +704,11 @@ class BaiduBaikeExtractor:
                         cell_content = " ".join(span_texts)
                     else:
                         # 检查其他可能的内容元素
-                        para_elements = cell.select('div.para_WzwJ3, div.table_FIFZE')
+                        para_elements = [
+                            div for div in cell.select('div')
+                            if any(cls.startswith('para_') or cls.startswith('table_') for cls in div.get('class', []))
+                        ]
+
                         if para_elements:
                             para_texts = []
                             for para in para_elements:
@@ -759,7 +769,13 @@ class BaiduBaikeExtractor:
             paragraphs = []
 
             # 查找所有可能的段落元素
-            para_elements = soup.select('div.para_WzwJ3, div.para, div.content_XwoLS, p')
+            para_elements = [
+                elem for elem in soup.select('div, p')
+                if (elem.name == 'p') or
+                   (elem.name == 'div' and any(
+                       cls.startswith('para_') or cls == 'para' or cls.startswith('content_') for cls in
+                       elem.get('class', [])))
+            ]
             for para in para_elements:
                 # 跳过包含标题的元素
                 if para.find(['h1', 'h2', 'h3']):
