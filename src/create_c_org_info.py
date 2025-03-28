@@ -276,7 +276,7 @@ def setup_database(db_config):
 
 def insert_into_database(departments, db_config):
     """
-    将部门信息插入到MySQL数据库中
+    将部门信息插入到MySQL数据库中，检查并报告重复的UUID
 
     参数:
         departments (list): 部门信息字典列表
@@ -292,9 +292,30 @@ def insert_into_database(departments, db_config):
         )
         cursor = conn.cursor()
 
-        # 插入数据
+        # 首先获取所有现有的UUID和组织名称
+        cursor.execute("SELECT uuid, org_name FROM c_org_info")
+        existing_data = {row[0]: row[1] for row in cursor.fetchall()}
+
+        # 找出并报告重复的UUID
+        duplicates = []
         for dept in departments:
-            # 准备SQL插入语句
+            if dept['uuid'] in existing_data:
+                duplicates.append({
+                    'uuid': dept['uuid'],
+                    'new_org_name': dept['org_name'],
+                    'existing_org_name': existing_data[dept['uuid']]
+                })
+
+        if duplicates:
+            print(f"发现 {len(duplicates)} 条重复的UUID:")
+            for dup in duplicates:
+                print(f"UUID: {dup['uuid']} - 新组织: {dup['new_org_name']} - 已存在组织: {dup['existing_org_name']}")
+
+        # 过滤掉已存在的UUID
+        unique_departments = [dept for dept in departments if dept['uuid'] not in existing_data]
+
+        # 插入唯一的部门数据
+        for dept in unique_departments:
             sql = """
             INSERT INTO c_org_info (
                 uuid, org_name, org_region, org_type, source_url, org_level, parent_uuid
@@ -310,12 +331,11 @@ def insert_into_database(departments, db_config):
                 dept['parent_uuid']
             )
 
-            # 执行SQL
             cursor.execute(sql, values)
 
-        # 提交事务
         conn.commit()
-        print(f"成功导入 {len(departments)} 条组织机构记录到数据库")
+        print(f"成功导入 {len(unique_departments)} 条组织机构记录到数据库")
+        print(f"跳过了 {len(duplicates)} 条重复记录")
 
     except mysql.connector.Error as error:
         print(f"数据库错误: {error}")
@@ -334,7 +354,19 @@ def insert_into_database(departments, db_config):
 def main():
     """主函数"""
     # 输入文件参数
-    input_file = "../data/input_安徽省_0327.xlsx"  # 输入文件路径
+    input_files = [
+        "../data/input_山西省_0328.xlsx",
+        "../data/内蒙.xlsx",
+        "../data/辽宁.xlsx",
+        "../data/吉林.xlsx",
+        "../data/黑龙江.xlsx",
+        "../data/福建.xlsx",
+        "../data/江西.xlsx",
+        "../data/山东.xlsx",
+        "../data/河南.xlsx",
+        "../data/湖北.xlsx"
+    ]  # 输入文件列表
+
     primary_col = "一级部门"  # 一级部门列名
     secondary_col = "二级部门"  # 二级部门列名
     province_col = "省份"  # 省份列名
@@ -352,21 +384,54 @@ def main():
     # 设置数据库和表结构
     setup_database(db_config)
 
-    # 提取部门信息
-    departments = extract_department_info(
-        input_file,
-        primary_col=primary_col,
-        secondary_col=secondary_col,
-        province_col=province_col,
-        type_col=type_col,
-        url_col=url_col  # 添加URL列名参数
-    )
+    # 存储所有文件的部门信息
+    all_departments = []
 
-    # 打印到控制台
-    print(f"从 {input_file} 中提取了 {len(departments)} 条组织机构信息")
+    # 遍历处理每个输入文件
+    for input_file in input_files:
+        departments = extract_department_info(
+            input_file,
+            primary_col=primary_col,
+            secondary_col=secondary_col,
+            province_col=province_col,
+            type_col=type_col,
+            url_col=url_col
+        )
 
-    # 将部门信息插入到数据库
-    insert_into_database(departments, db_config)
+        print(f"从 {input_file} 中提取了 {len(departments)} 条组织机构信息")
+        all_departments.extend(departments)
+
+    print(f"总共提取了 {len(all_departments)} 条组织机构信息")
+
+    # 检查并移除重复的 UUID
+    uuid_to_dept = {}
+    duplicate_uuids = set()
+
+    # 首先找出所有重复的 UUID
+    for dept in all_departments:
+        uuid = dept['uuid']
+        if uuid in uuid_to_dept:
+            duplicate_uuids.add(uuid)
+            print(f"发现重复UUID: {uuid}")
+            print(f"  - 先前组织: {uuid_to_dept[uuid]['org_name']}")
+            print(f"  - 当前组织: {dept['org_name']}")
+            print(f"  - 所在省份: {dept['org_region']}")
+        else:
+            uuid_to_dept[uuid] = dept
+
+    # 过滤掉重复的记录，只保留第一个出现的
+    unique_departments = []
+    seen_uuids = set()
+
+    for dept in all_departments:
+        if dept['uuid'] not in seen_uuids:
+            unique_departments.append(dept)
+            seen_uuids.add(dept['uuid'])
+
+    print(f"过滤重复后剩余 {len(unique_departments)} 条记录")
+
+    # 将唯一的部门信息插入到数据库
+    insert_into_database(unique_departments, db_config)
 
 
 if __name__ == "__main__":
