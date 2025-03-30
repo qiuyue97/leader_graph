@@ -1,6 +1,7 @@
 import hashlib
 import pandas as pd
 import mysql.connector
+import os
 from urllib.parse import quote
 
 
@@ -353,19 +354,8 @@ def insert_into_database(departments, db_config):
 
 def main():
     """主函数"""
-    # 输入文件参数
-    input_files = [
-        "../data/input_山西省_0328.xlsx",
-        "../data/内蒙.xlsx",
-        "../data/辽宁.xlsx",
-        "../data/吉林.xlsx",
-        "../data/黑龙江.xlsx",
-        "../data/福建.xlsx",
-        "../data/江西.xlsx",
-        "../data/山东.xlsx",
-        "../data/河南.xlsx",
-        "../data/湖北.xlsx"
-    ]  # 输入文件列表
+    # 输入文件夹参数
+    input_directory = "../data/input_data"  # 输入文件夹路径
 
     primary_col = "一级部门"  # 一级部门列名
     secondary_col = "二级部门"  # 二级部门列名
@@ -387,19 +377,30 @@ def main():
     # 存储所有文件的部门信息
     all_departments = []
 
+    # 获取文件夹中所有的Excel和CSV文件
+    input_files = []
+    for filename in os.listdir(input_directory):
+        if filename.endswith(('.xlsx', '.xls', '.csv')):
+            input_files.append(os.path.join(input_directory, filename))
+
+    print(f"在文件夹 {input_directory} 中找到了 {len(input_files)} 个Excel/CSV文件")
+
     # 遍历处理每个输入文件
     for input_file in input_files:
-        departments = extract_department_info(
-            input_file,
-            primary_col=primary_col,
-            secondary_col=secondary_col,
-            province_col=province_col,
-            type_col=type_col,
-            url_col=url_col
-        )
+        try:
+            departments = extract_department_info(
+                input_file,
+                primary_col=primary_col,
+                secondary_col=secondary_col,
+                province_col=province_col,
+                type_col=type_col,
+                url_col=url_col
+            )
 
-        print(f"从 {input_file} 中提取了 {len(departments)} 条组织机构信息")
-        all_departments.extend(departments)
+            print(f"从 {input_file} 中提取了 {len(departments)} 条组织机构信息")
+            all_departments.extend(departments)
+        except Exception as e:
+            print(f"处理文件 {input_file} 时出错: {e}")
 
     print(f"总共提取了 {len(all_departments)} 条组织机构信息")
 

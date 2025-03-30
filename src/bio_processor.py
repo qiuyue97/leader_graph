@@ -636,6 +636,7 @@ class BiographicalDataProcessor:
                                     total_count - self.processed_count) if self.processed_count > 0 else 0
                         logger.info(
                             f"进度: {self.processed_count}/{total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
+                        self.token_tracker.log_stats()
 
                 except Exception as e:
                     logger.error(f"处理领导人ID={leader['id']}时发生异常: {str(e)}")
@@ -647,9 +648,6 @@ class BiographicalDataProcessor:
         elapsed_time = time.time() - start_time
         logger.info(
             f"处理完成. 总数: {total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 总耗时: {elapsed_time:.2f}秒, 平均耗时: {elapsed_time / total_count:.2f}秒/条")
-
-        # 输出token使用和成本统计
-        self.token_tracker.log_stats()
 
 
 def main():
