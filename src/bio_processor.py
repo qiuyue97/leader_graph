@@ -1,8 +1,3 @@
-"""
-bio_processor_mysql.py
-从MySQL数据库读取人物履历数据，使用多线程调用GPT-4o进行处理，并将结构化结果存回数据库
-"""
-
 import os
 import time
 import logging
@@ -15,6 +10,7 @@ import openai
 import pymysql
 from concurrent.futures import ThreadPoolExecutor
 import sys
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config.settings import Config
 
@@ -33,6 +29,136 @@ logging.basicConfig(
 logger = logging.getLogger("bio_processor")
 
 
+class TokenCostTracker:
+    """跟踪token使用和成本的类"""
+
+    def __init__(self,
+                 input_price_per_1m: float = 2.50,
+                 cached_input_price_per_1m: float = 1.25,
+                 output_price_per_1m: float = 10.0):
+        """
+        初始化token成本追踪器
+
+        Args:
+            input_price_per_1m: 输入token每1,000,000个的价格（美元）
+            cached_input_price_per_1m: 缓存输入token每1,000,000个的价格（美元）
+            output_price_per_1m: 输出token每1,000,000个的价格（美元）
+        """
+        self.input_price_per_1m = input_price_per_1m
+        self.cached_input_price_per_1m = cached_input_price_per_1m
+        self.output_price_per_1m = output_price_per_1m
+
+        # 统计信息
+        self.total_input_tokens = 0
+        self.total_cached_input_tokens = 0  # 未实现，因为API响应中未提供此信息
+        self.total_output_tokens = 0
+        self.total_tokens = 0
+
+        # 成本统计
+        self.total_input_cost = 0.0
+        self.total_cached_input_cost = 0.0
+        self.total_output_cost = 0.0
+        self.total_cost = 0.0
+
+        # 线程安全的锁
+        self.stats_lock = threading.Lock()
+
+    def update_from_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        从API响应中更新token使用统计
+
+        Args:
+            response: Azure OpenAI API的响应
+
+        Returns:
+            包含此次请求token使用和成本的字典
+        """
+        try:
+            # 提取token使用信息 - 适配实际Azure OpenAI API响应格式
+            usage = response.get("usage", {})
+            if not usage:
+                logger.warning("API响应中没有找到token使用信息")
+                return {}
+
+            # 从实际响应格式中提取token使用信息
+            input_tokens = usage.get("prompt_tokens", 0)
+            output_tokens = usage.get("completion_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+
+            # 检查是否有缓存token信息
+            prompt_tokens_details = usage.get("prompt_tokens_details", {})
+            cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
+
+            # 实际输入token = 总输入token - 缓存token
+            actual_input_tokens = input_tokens - cached_tokens
+
+            # 计算成本 - 正确使用每百万tokens的价格
+            input_cost = (actual_input_tokens / 1000000.0) * self.input_price_per_1m
+            cached_cost = (cached_tokens / 1000000.0) * self.cached_input_price_per_1m
+            output_cost = (output_tokens / 1000000.0) * self.output_price_per_1m
+            total_cost = input_cost + cached_cost + output_cost
+
+            # 使用示例：1096输入tokens，0缓存tokens，338输出tokens
+            # 输入成本: (1096/1000000) * $2.50 = $0.00274
+            # 输出成本: (338/1000000) * $10.00 = $0.00338
+            # 总成本: $0.00274 + $0.00338 = $0.00612
+
+            # 更新全局统计
+            with self.stats_lock:
+                self.total_input_tokens += actual_input_tokens
+                self.total_cached_input_tokens += cached_tokens
+                self.total_output_tokens += output_tokens
+                self.total_tokens += total_tokens
+
+                self.total_input_cost += input_cost
+                self.total_cached_input_cost += cached_cost
+                self.total_output_cost += output_cost
+                self.total_cost += total_cost
+
+            # 返回此次请求的统计
+            return {
+                "input_tokens": actual_input_tokens,
+                "cached_tokens": cached_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "input_cost": input_cost,
+                "cached_cost": cached_cost,
+                "output_cost": output_cost,
+                "total_cost": total_cost
+            }
+
+        except Exception as e:
+            logger.error(f"计算token成本时出错: {str(e)}")
+            return {}
+
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        获取累积的token使用和成本统计
+
+        Returns:
+            包含累积统计信息的字典
+        """
+        with self.stats_lock:
+            return {
+                "total_input_tokens": self.total_input_tokens,
+                "total_cached_input_tokens": self.total_cached_input_tokens,
+                "total_output_tokens": self.total_output_tokens,
+                "total_tokens": self.total_tokens,
+                "total_input_cost": self.total_input_cost,
+                "total_cached_input_cost": self.total_cached_input_cost,
+                "total_output_cost": self.total_output_cost,
+                "total_cost": self.total_cost
+            }
+
+    def log_stats(self) -> None:
+        """记录当前累积的token使用和成本统计"""
+        stats = self.get_stats()
+        logger.info(
+            f"累积Token使用统计: 输入={stats['total_input_tokens']}, 缓存输入={stats['total_cached_input_tokens']}, 输出={stats['total_output_tokens']}, 总计={stats['total_tokens']}")
+        logger.info(
+            f"累积Token成本统计: 输入=${stats['total_input_cost']:.2f}, 缓存输入=${stats['total_cached_input_cost']:.2f}, 输出=${stats['total_output_cost']:.2f}, 总计=${stats['total_cost']:.2f}")
+
+
 class BiographicalDataProcessor:
     """处理人物履历数据的类"""
 
@@ -43,7 +169,10 @@ class BiographicalDataProcessor:
                  db_config: Dict[str, str] = None,
                  max_threads: int = 10,
                  request_rate: int = 8,  # 每秒请求数，低于限制
-                 token_limit: int = 90000):  # 每分钟令牌数，留出余量
+                 token_limit: int = 90000,  # 每分钟令牌数，留出余量
+                 input_price_per_1m: float = 2.50,
+                 cached_input_price_per_1m: float = 1.25,
+                 output_price_per_1m: float = 10.0):
         """
         初始化处理器
 
@@ -55,6 +184,9 @@ class BiographicalDataProcessor:
             max_threads: 最大线程数，默认为10
             request_rate: 每秒最大请求数，默认为8
             token_limit: 每分钟最大令牌数，默认为90000
+            input_price_per_1m: 输入token每1,000,000个的价格（美元）
+            cached_input_price_per_1m: 缓存输入token每1,000,000个的价格（美元）
+            output_price_per_1m: 输出token每1,000,000个的价格（美元）
         """
         self.azure_endpoint = azure_endpoint
         self.api_key = api_key
@@ -81,7 +213,15 @@ class BiographicalDataProcessor:
         self.success_count = 0
         self.error_count = 0
 
-        logger.info(f"初始化完成，使用{max_threads}个线程")
+        # 初始化token成本追踪器
+        self.token_tracker = TokenCostTracker(
+            input_price_per_1m=input_price_per_1m,
+            cached_input_price_per_1m=cached_input_price_per_1m,
+            output_price_per_1m=output_price_per_1m
+        )
+
+        logger.info(
+            f"初始化完成，使用{max_threads}个线程，Token价格配置：输入=${input_price_per_1m}/1M，缓存输入=${cached_input_price_per_1m}/1M，输出=${output_price_per_1m}/1M")
 
     def get_database_connection(self):
         """创建MySQL数据库连接"""
@@ -255,7 +395,19 @@ class BiographicalDataProcessor:
                         messages=messages,
                         tools=tools,
                         parallel_tool_calls=False  # 使用结构化输出时需要设置为False
+                        # 移除了不兼容的 response_format 参数
                     )
+
+                    # 获取完整的响应对象（包含token使用情况）
+                    full_response = response.model_dump()
+
+                    # 计算并记录token使用成本
+                    token_stats = self.token_tracker.update_from_response(full_response)
+                    if token_stats:
+                        logger.info(f"本次API调用token使用: 输入={token_stats['input_tokens']}, "
+                                    f"缓存={token_stats['cached_tokens']}, "
+                                    f"输出={token_stats['output_tokens']}, "
+                                    f"成本=${token_stats['total_cost']:.4f}")
 
                     # 解析返回结果
                     if response.choices and response.choices[0].message.tool_calls:
@@ -480,8 +632,11 @@ class BiographicalDataProcessor:
                     # 输出进度
                     if self.processed_count % 10 == 0 or self.processed_count == total_count:
                         elapsed = time.time() - start_time
-                        remaining = (elapsed / self.processed_count) * (total_count - self.processed_count) if self.processed_count > 0 else 0
-                        logger.info(f"进度: {self.processed_count}/{total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
+                        remaining = (elapsed / self.processed_count) * (
+                                    total_count - self.processed_count) if self.processed_count > 0 else 0
+                        logger.info(
+                            f"进度: {self.processed_count}/{total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
+                        self.token_tracker.log_stats()
 
                 except Exception as e:
                     logger.error(f"处理领导人ID={leader['id']}时发生异常: {str(e)}")
@@ -491,7 +646,8 @@ class BiographicalDataProcessor:
 
         # 打印最终统计
         elapsed_time = time.time() - start_time
-        logger.info(f"处理完成. 总数: {total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 总耗时: {elapsed_time:.2f}秒, 平均耗时: {elapsed_time/total_count:.2f}秒/条")
+        logger.info(
+            f"处理完成. 总数: {total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 总耗时: {elapsed_time:.2f}秒, 平均耗时: {elapsed_time / total_count:.2f}秒/条")
 
 
 def main():
@@ -508,6 +664,11 @@ def main():
     parser.add_argument('--password', help='MySQL密码，优先级高于配置文件')
     parser.add_argument('--database', help='MySQL数据库名，优先级高于配置文件')
     parser.add_argument('--threads', type=int, help='线程数量，优先级高于配置文件')
+
+    # 添加token价格相关的命令行参数
+    parser.add_argument('--input-price', type=float, default=2.50, help='输入token每1,000,000个的价格（美元）')
+    parser.add_argument('--cached-input-price', type=float, default=1.25, help='缓存输入token每1,000,000个的价格（美元）')
+    parser.add_argument('--output-price', type=float, default=10.0, help='输出token每1,000,000个的价格（美元）')
 
     args = parser.parse_args()
 
@@ -540,7 +701,7 @@ def main():
     api_key = config.azure_openai_api_key
     api_version = config.azure_openai_api_version
 
-    # 创建处理器
+    # 创建处理器 - 添加token价格参数
     processor = BiographicalDataProcessor(
         azure_endpoint=azure_endpoint,
         api_key=api_key,
@@ -548,15 +709,21 @@ def main():
         db_config=db_config,
         max_threads=max_threads,
         request_rate=config.ai_request_rate,
-        token_limit=config.ai_token_limit
+        token_limit=config.ai_token_limit,
+        input_price_per_1m=args.input_price,
+        cached_input_price_per_1m=args.cached_input_price,
+        output_price_per_1m=args.output_price
     )
 
     # 处理领导人履历数据
     # 默认跳过已处理过的记录，除非明确指定--process-all参数
     processor.process_leaders(
         limit=args.limit,
-        skip_processed=True  # 始终跳过已处理的记录，忽略--process-all参数
+        skip_processed=not args.process_all
     )
+
+    # 输出最终的token使用和成本统计
+    processor.token_tracker.log_stats()
 
     logger.info("处理完成")
 
