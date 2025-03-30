@@ -48,7 +48,7 @@ class DBManager:
             query = """
             SELECT id, leader_name, source_url 
             FROM c_org_leader_info 
-            WHERE source_url IS NOT NULL AND source_url != ''
+            WHERE is_deleted = 0 AND source_url IS NOT NULL AND source_url != ''
             """
             cursor.execute(query)
 
