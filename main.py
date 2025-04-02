@@ -9,8 +9,8 @@ from utils.logger import setup_logger
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='百度百科爬虫和解析工具')
-    parser.add_argument('--stage', type=str, default='db_fetch', choices=['fetch', 'parse', 'full', 'db_fetch'],
-                        help='处理阶段: fetch(仅爬取), parse(仅解析), full(完整流程), db_fetch(从数据库爬取)')
+    parser.add_argument('--stage', type=str, default='db_fetch', choices=['parse', 'full', 'db_fetch'],
+                        help='处理阶段: parse(仅解析), full(完整流程), db_fetch(从数据库爬取)')
     args = parser.parse_args()
 
     # 设置日志
@@ -82,11 +82,6 @@ def main():
             logger.info("开始执行从数据库爬取阶段...")
             processor.process_db_fetch_stage()
             logger.info("从数据库爬取阶段完成")
-
-        elif args.stage == 'fetch' or args.stage == 'full':
-            logger.info("开始执行爬取阶段...")
-            processor.process_fetch_stage()
-            logger.info("爬取阶段完成")
 
         if args.stage == 'parse' or args.stage == 'full':
             logger.info("开始执行解析阶段...")
