@@ -18,7 +18,6 @@ class BaikeScraper:
     """专门负责获取百度百科页面内容的爬虫，不负责内容解析"""
 
     def __init__(self, proxy_pool: Optional[ProxyPool] = None,
-                 output_dir: str = './person_data',
                  max_retries: int = 3,
                  min_content_size: int = 1024):
         """
@@ -26,22 +25,16 @@ class BaikeScraper:
 
         Args:
             proxy_pool: 代理池实例，用于获取代理
-            output_dir: 输出目录，用于保存 HTML 文件
             max_retries: 重试次数
             min_content_size: 有效HTML内容的最小字节数
         """
         self.proxy_pool = proxy_pool
-        self.output_dir = output_dir
         self.max_retries = max_retries
         self.min_content_size = min_content_size
         self.selenium_scraper = None
 
         # 初始化内容验证器
         self.content_validator = ContentValidator(min_content_size=min_content_size)
-
-        # 创建输出目录
-        os.makedirs(self.output_dir, exist_ok=True)
-        logger.info(f"已创建输出目录: {self.output_dir}")
 
     def fetch_page(self, url: str, use_mobile: bool = False,
                    provided_proxy: Optional[Dict[str, str]] = None) -> Optional[str]:
@@ -122,41 +115,6 @@ class BaikeScraper:
 
         return None
 
-    def save_html_content(self, url: str, html_content: str, name: str, person_id: str = None) -> Optional[str]:
-        """
-        保存网页 HTML 内容到文件
-
-        Args:
-            url: 页面 URL
-            html_content: HTML 内容
-            name: 人物姓名
-            person_id: 原始 CSV 中的 person_id 字段
-
-        Returns:
-            成功时返回保存的文件路径，失败时返回 None
-        """
-        try:
-            # 从标题中提取姓名
-            safe_name = ''.join(c for c in name if c.isalnum() or c in '_-')  # 确保文件名安全
-
-            # 构建文件名 (使用"姓名_id")
-            if person_id:
-                filename = f"{self.output_dir}/{safe_name}_{person_id}.html"
-            else:
-                # 如果没有提供 person_id，使用备选方案
-                url_id = url.split('/')[-1]
-                filename = f"{self.output_dir}/{safe_name}_{url_id}.html"
-
-            # 保存 HTML 内容
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-
-            logger.info(f"已保存 HTML 内容到: {filename}，文件大小: {len(html_content.encode('utf-8'))} 字节")
-            return filename
-        except Exception as e:
-            logger.error(f"保存 HTML 内容失败: {str(e)}")
-            return None
-
     def fetch_with_metadata(self, url: str, person_name: str = None, person_id: str = None,
                             use_mobile: bool = True,
                             provided_proxy: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -201,11 +159,6 @@ class BaikeScraper:
                 "validation_result": validation_result
             }
 
-        # 保存 HTML 内容
-        saved_file = None
-        if person_name:
-            saved_file = self.save_html_content(url, html_content, person_name, person_id)
-
         return {
             "success": True,
             "html_content": html_content,
@@ -213,7 +166,6 @@ class BaikeScraper:
             "url": url,
             "person_name": person_name,
             "person_id": person_id,
-            "saved_file": saved_file,
             "timestamp": datetime.now().isoformat(),
             "validation_result": validation_result
         }
