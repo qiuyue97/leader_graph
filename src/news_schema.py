@@ -3,7 +3,7 @@ news_extraction_schema.py
 用于定义新闻稿信息抽取的数据结构和验证逻辑
 """
 
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 
@@ -22,7 +22,10 @@ class Location(BaseModel):
 class TargetEntity(BaseModel):
     """目标客体信息模型（可以是人、组织或其他实体）"""
     name: str = Field(..., description="目标客体名称")
-    type: str = Field(..., description="目标客体类型，如'个人'、'公司'、'组织'、'国家'等")
+    type: Literal["个人", "公司", "组织"] = Field(
+        ...,
+        description="目标客体类型，只能是'个人'、'公司'或'组织'"
+    )
     description: Optional[str] = Field(None, description="目标客体的附加描述，如不存在则为null")
 
 
@@ -63,9 +66,9 @@ class NewsExtraction(BaseModel):
                         "description": "由美国商务部长带队"
                     },
                     {
-                        "name": "日本贸易协会",
-                        "type": "组织",
-                        "description": "null"
+                        "name": "李明",
+                        "type": "个人",
+                        "description": "技术专家"
                     }
                 ],
                 "accompanying_persons": [

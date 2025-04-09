@@ -1,24 +1,16 @@
 import pymysql
 
 
-def create_org_leader_info_table():
+def create_org_leader_info_table(db_config):
     """
-    创建cnfic_leader库下的c_org_leader_info表
+    db_config: 数据库配置
     """
-    # 数据库连接配置
-    db_config = {
-        'host': 'localhost',
-        'user': 'root',
-        'password': 'wlh3338501',
-        'charset': 'utf8mb4',
-        'cursorclass': pymysql.cursors.DictCursor
-    }
 
     # 建表DDL
-    create_database_sql = "CREATE DATABASE IF NOT EXISTS cnfic_leader;"
+    create_database_sql = f"CREATE DATABASE IF NOT EXISTS {db_config['database']};"
 
-    create_table_sql = """
-    CREATE TABLE IF NOT EXISTS cnfic_leader.c_org_leader_info (
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {db_config['database']}.c_org_leader_info (
         id BIGINT NOT NULL AUTO_INCREMENT COMMENT '自增id',
         uuid VARCHAR(64) NOT NULL COMMENT '生成uuid',
         org_info_id VARCHAR(255) COMMENT '机构信息id,多个用逗号分隔',

@@ -254,18 +254,6 @@ class DBManager:
             是否成功更新
         """
         try:
-            # 先尝试修改字段类型为LONGTEXT，确保能存储大型HTML内容
-            try:
-                alter_query = """
-                ALTER TABLE c_org_info
-                MODIFY COLUMN remark LONGTEXT COMMENT '备注（网页文本）'
-                """
-                self.cursor.execute(alter_query)
-                self.connection.commit()
-                logger.info("已将remark字段类型修改为LONGTEXT")
-            except mysql.connector.Error as alter_error:
-                logger.warning(f"尝试修改字段类型时出错（可能已经是LONGTEXT）: {str(alter_error)}")
-
             # 更新remark字段
             query = """
             UPDATE c_org_info
@@ -366,36 +354,3 @@ def fetch_and_store_html(db_config: Dict[str, str], org_uuids: Optional[List[str
         db_manager.disconnect()
         # 关闭Selenium
         fetcher.close()
-
-
-def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(description='从URL获取HTML内容并保存到数据库的remark字段')
-    parser.add_argument('--host', default='localhost', help='MySQL主机地址')
-    parser.add_argument('--user', default='root', help='MySQL用户名')
-    parser.add_argument('--password', default='wlh3338501', help='MySQL密码')
-    parser.add_argument('--database', default='cnfic_leader', help='MySQL数据库名')
-    parser.add_argument('--uuids', help='要处理的组织UUID列表，以逗号分隔')
-
-    args = parser.parse_args()
-
-    # 数据库配置
-    db_config = {
-        'host': args.host,
-        'user': args.user,
-        'password': args.password,
-        'database': args.database
-    }
-
-    # 解析组织UUID列表
-    org_uuid_list = None
-    if args.uuids:
-        org_uuid_list = [uuid.strip() for uuid in args.uuids.split(',')]
-        logger.info(f"将处理指定的 {len(org_uuid_list)} 个组织UUID")
-
-    # 处理组织信息
-    fetch_and_store_html(db_config, org_uuid_list)
-
-
-if __name__ == "__main__":
-    main()

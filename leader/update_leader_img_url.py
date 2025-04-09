@@ -361,44 +361,10 @@ class LeaderImageExtractor:
             self.disconnect_db()
 
 
-def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(description='从数据库提取领导人的头像图片URL')
-    parser.add_argument('--host', default='localhost', help='MySQL主机地址')
-    parser.add_argument('--user', default='root', help='MySQL用户名')
-    parser.add_argument('--password', default='wlh3338501', help='MySQL密码')
-    parser.add_argument('--database', default='cnfic_leader', help='MySQL数据库名')
-    parser.add_argument('--limit', type=int, help='限制处理的领导人数量')
-    parser.add_argument('--leader_id', type=int, help='指定领导人ID')
-    parser.add_argument('--output_file', help='输出结果到指定文件')
-
-    args = parser.parse_args()
-
-    # 数据库配置
-    db_config = {
-        'host': args.host,
-        'user': args.user,
-        'password': args.password,
-        'database': args.database
-    }
-
+def update_leader_img_url(db_config):
     # 创建提取器并处理
     extractor = LeaderImageExtractor(db_config)
-    results = extractor.process_leaders(args.limit, args.leader_id)
+    results = extractor.process_leaders()
 
     # 打印摘要
     print(f"\n提取完成! 总共处理了 {len(results)} 个领导人的图片URL")
-
-    # 如果指定了输出文件，将结果写入文件
-    if args.output_file:
-        try:
-            with open(args.output_file, 'w', encoding='utf-8') as f:
-                for leader_id, url in results.items():
-                    f.write(f"领导人ID: {leader_id}, 图片URL: {url}\n")
-            print(f"\n结果已保存到文件: {args.output_file}")
-        except Exception as e:
-            print(f"保存结果到文件时出错: {str(e)}")
-
-
-if __name__ == "__main__":
-    main()

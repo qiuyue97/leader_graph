@@ -882,10 +882,6 @@ class BaiduBaikeExtractor:
         """将提取结果映射到数据库字段"""
         mapped_fields = {}
 
-        # 处理description映射到person_title
-        if extraction_result.get('description'):
-            mapped_fields['person_title'] = extraction_result['description']
-
         # 处理summary单独映射到org_profile
         if extraction_result.get('summary'):
             mapped_fields['org_profile'] = extraction_result['summary']
