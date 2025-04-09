@@ -11,18 +11,17 @@ import pymysql
 from concurrent.futures import ThreadPoolExecutor
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config.settings import Config
 
 # 导入数据模型
-from schema import BiographicalEvents
+from leader.schema import BiographicalEvents
 
 # 设置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("../logs/bio_processing.log"),
+        logging.FileHandler("./logs/bio_processing.log"),
         logging.StreamHandler()
     ]
 )
@@ -35,7 +34,8 @@ class TokenCostTracker:
     def __init__(self,
                  input_price_per_1m: float = 2.50,
                  cached_input_price_per_1m: float = 1.25,
-                 output_price_per_1m: float = 10.0):
+                 output_price_per_1m: float = 10.0,
+                 cost_limit: Optional[float] = None):
         """
         初始化token成本追踪器
 
@@ -60,8 +60,29 @@ class TokenCostTracker:
         self.total_output_cost = 0.0
         self.total_cost = 0.0
 
+        # 成本限制
+        self.cost_limit = cost_limit
+        self.limit_reached = False
+
         # 线程安全的锁
         self.stats_lock = threading.Lock()
+
+    def check_cost_limit_reached(self) -> bool:
+        """
+        检查是否达到API调用成本限制
+
+        Returns:
+            是否达到限制
+        """
+        if self.cost_limit is None:
+            return False
+
+        if self.total_cost >= self.cost_limit:
+            if not self.limit_reached:
+                logger.warning(f"已达到成本限制 (${self.cost_limit:.2f})，将停止处理")
+                self.limit_reached = True
+            return True
+        return False
 
     def update_from_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -114,6 +135,7 @@ class TokenCostTracker:
                 self.total_cached_input_cost += cached_cost
                 self.total_output_cost += output_cost
                 self.total_cost += total_cost
+                self.check_cost_limit_reached()
 
             # 返回此次请求的统计
             return {
@@ -172,7 +194,8 @@ class BiographicalDataProcessor:
                  token_limit: int = 90000,  # 每分钟令牌数，留出余量
                  input_price_per_1m: float = 2.50,
                  cached_input_price_per_1m: float = 1.25,
-                 output_price_per_1m: float = 10.0):
+                 output_price_per_1m: float = 10.0,
+                 cost_limit: Optional[float] = None):
         """
         初始化处理器
 
@@ -217,7 +240,8 @@ class BiographicalDataProcessor:
         self.token_tracker = TokenCostTracker(
             input_price_per_1m=input_price_per_1m,
             cached_input_price_per_1m=cached_input_price_per_1m,
-            output_price_per_1m=output_price_per_1m
+            output_price_per_1m=output_price_per_1m,
+            cost_limit=cost_limit
         )
 
         logger.info(
@@ -327,6 +351,10 @@ class BiographicalDataProcessor:
         Returns:
             Dict: 结构化的人物履历信息
         """
+        if self.token_tracker.limit_reached:
+            logger.warning("已达到成本限制，跳过API调用")
+            return {"events": []}
+
         # 等待速率限制
         self._wait_for_rate_limit()
 
@@ -408,6 +436,10 @@ class BiographicalDataProcessor:
                                     f"缓存={token_stats['cached_tokens']}, "
                                     f"输出={token_stats['output_tokens']}, "
                                     f"成本=${token_stats['total_cost']:.4f}")
+
+                    if token_stats and self.token_tracker.limit_reached:
+                        logger.warning(
+                            f"该请求后已达到成本限制(${self.token_tracker.total_cost:.2f}/${self.token_tracker.cost_limit:.2f})，将在处理完当前任务后停止")
 
                     # 解析返回结果
                     if response.choices and response.choices[0].message.tool_calls:
@@ -638,6 +670,15 @@ class BiographicalDataProcessor:
                             f"进度: {self.processed_count}/{total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
                         self.token_tracker.log_stats()
 
+                    # 检查是否达到成本限制
+                    if self.token_tracker.limit_reached:
+                        logger.warning(
+                            f"已达到成本限制(${self.token_tracker.total_cost:.2f}/${self.token_tracker.cost_limit:.2f})，正在停止处理")
+                        # 取消所有未完成的任务
+                        for remaining_future in [f for f in futures if not f.done()]:
+                            remaining_future.cancel()
+                        break
+
                 except Exception as e:
                     logger.error(f"处理领导人ID={leader['id']}时发生异常: {str(e)}")
                     with self.stats_lock:
@@ -650,32 +691,11 @@ class BiographicalDataProcessor:
             f"处理完成. 总数: {total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 总耗时: {elapsed_time:.2f}秒, 平均耗时: {elapsed_time / total_count:.2f}秒/条")
 
 
-def main():
-    """主函数"""
-    import argparse
-
-    # 命令行参数
-    parser = argparse.ArgumentParser(description='从MySQL数据库处理领导人履历数据并结构化')
-    parser.add_argument('--limit', type=int, help='限制处理的记录数量')
-    parser.add_argument('--process-all', action='store_true', help='处理所有记录，包括已处理过的(默认只处理未处理的)')
-    parser.add_argument('--config', default='../config.yaml', help='配置文件路径')
-    parser.add_argument('--host', help='MySQL主机地址，优先级高于配置文件')
-    parser.add_argument('--user', help='MySQL用户名，优先级高于配置文件')
-    parser.add_argument('--password', help='MySQL密码，优先级高于配置文件')
-    parser.add_argument('--database', help='MySQL数据库名，优先级高于配置文件')
-    parser.add_argument('--threads', type=int, help='线程数量，优先级高于配置文件')
-
-    # 添加token价格相关的命令行参数
-    parser.add_argument('--input-price', type=float, default=2.50, help='输入token每1,000,000个的价格（美元）')
-    parser.add_argument('--cached-input-price', type=float, default=1.25, help='缓存输入token每1,000,000个的价格（美元）')
-    parser.add_argument('--output-price', type=float, default=10.0, help='输出token每1,000,000个的价格（美元）')
-
-    args = parser.parse_args()
-
+def bio_processor(config_path, cost_limit):
     # 从配置文件加载配置
     try:
-        config = Config.from_file(args.config)
-        logger.info(f"从 {args.config} 加载配置")
+        config = Config.from_file(config_path)
+        logger.info(f"从 {config_path} 加载配置")
     except Exception as e:
         logger.error(f"加载配置文件失败: {str(e)}，使用默认配置")
         config = Config()
@@ -683,18 +703,8 @@ def main():
     # 数据库配置
     db_config = config.db_config.copy()
 
-    # 命令行参数优先于配置文件
-    if args.host:
-        db_config['host'] = args.host
-    if args.user:
-        db_config['user'] = args.user
-    if args.password:
-        db_config['password'] = args.password
-    if args.database:
-        db_config['database'] = args.database
-
     # 线程配置
-    max_threads = args.threads if args.threads else config.ai_max_threads
+    max_threads = config.ai_max_threads
 
     # Azure OpenAI API 配置
     azure_endpoint = config.azure_openai_endpoint
@@ -710,23 +720,16 @@ def main():
         max_threads=max_threads,
         request_rate=config.ai_request_rate,
         token_limit=config.ai_token_limit,
-        input_price_per_1m=args.input_price,
-        cached_input_price_per_1m=args.cached_input_price,
-        output_price_per_1m=args.output_price
+        input_price_per_1m=2.50,
+        cached_input_price_per_1m=1.25,
+        output_price_per_1m=10.0,
+        cost_limit=cost_limit
     )
 
     # 处理领导人履历数据
-    # 默认跳过已处理过的记录，除非明确指定--process-all参数
-    processor.process_leaders(
-        limit=args.limit,
-        skip_processed=not args.process_all
-    )
+    processor.process_leaders()
 
     # 输出最终的token使用和成本统计
     processor.token_tracker.log_stats()
 
     logger.info("处理完成")
-
-
-if __name__ == "__main__":
-    main()

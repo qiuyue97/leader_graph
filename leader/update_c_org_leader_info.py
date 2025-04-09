@@ -195,6 +195,7 @@ class LeaderExtractor:
                 # 检查是否为有效人名
                 if clean_name and clean_url and self.is_valid_leader_name(clean_name):
                     # 使用URL的MD5哈希作为UUID
+                    # TODO: 此处UUID需要替换为人物的姓名+籍贯+出生年月进行生成
                     person_uuid = hashlib.md5(clean_url.encode()).hexdigest()
                     leaders.append({
                         'org_info_id': org_info_id,
@@ -206,52 +207,6 @@ class LeaderExtractor:
                     print(f"添加领导: '{clean_name}' (原始: '{leader_name}'), URL: {clean_url}")
                 else:
                     print(f"过滤掉无效人名: '{clean_name}' (原始: '{leader_name}'), URL: {clean_url}")
-
-        # 7. 如果没找到任何领导链接，尝试查找职位相关段落
-        if not leaders:
-            print("在领导部分未找到有效的领导链接，尝试搜索职位相关段落...")
-
-            # 查找所有段落
-            paras = soup.find_all('div', class_=lambda c: c and ('para' in c or 'text' in c))
-
-            # 职位关键词
-            position_keywords = ['主任', '部长', '局长', '书记', '主席', '委员', '厅长', '秘书长', '局长']
-
-            for para in paras:
-                para_text = para.get_text()
-
-                # 检查段落是否包含职位关键词
-                if any(keyword in para_text for keyword in position_keywords):
-                    # 查找段落中的链接
-                    links = para.find_all('a', href=True)
-
-                    for link in links:
-                        href = link.get('href', '')
-                        if '/item/' in href:
-                            if href.startswith('/'):
-                                person_url = f"https://baike.baidu.com{href}"
-                            else:
-                                person_url = href
-
-                            leader_name = link.get_text().strip()
-                            print(f"发现段落中的链接文本: '{leader_name}', URL: {person_url}")
-
-                            clean_name = self.clean_name(leader_name)
-                            clean_url = self.clean_url(person_url)
-
-                            if clean_name and clean_url and self.is_valid_leader_name(clean_name):
-                                # 使用URL的MD5哈希作为UUID
-                                person_uuid = hashlib.md5(clean_url.encode()).hexdigest()
-                                leaders.append({
-                                    'org_info_id': org_info_id,
-                                    'org_info_uuid': org_info_uuid,
-                                    'uuid': person_uuid,
-                                    'leader_name': clean_name,
-                                    'source_url': clean_url
-                                })
-                                print(f"添加段落中的领导: '{clean_name}' (原始: '{leader_name}'), URL: {clean_url}")
-                            else:
-                                print(f"过滤掉无效人名: '{clean_name}' (原始: '{leader_name}'), URL: {clean_url}")
 
         return leaders
 
@@ -363,19 +318,6 @@ def get_processed_org_ids(conn):
 
 def process_database_records(conn, limit=None, offset=0):
     """从数据库中处理记录，提取领导信息"""
-
-    def get_org_name(conn, org_id):
-        """获取组织名称"""
-        try:
-            with conn.cursor() as cursor:
-                sql = "SELECT org_name FROM c_org_info WHERE id = %s"
-                cursor.execute(sql, (org_id,))
-                result = cursor.fetchone()
-                return result['org_name'] if result else "未知组织"
-        except Exception as e:
-            print(f"获取组织名称时出错: {e}")
-            return "未知组织"
-
     # 初始化提取器
     extractor = LeaderExtractor()
 
@@ -437,28 +379,13 @@ def process_database_records(conn, limit=None, offset=0):
         raise
 
 
-if __name__ == "__main__":
-    # 数据库配置
-    db_config = {
-        'host': 'localhost',
-        'user': 'root',
-        'password': 'wlh3338501',
-        'database': 'cnfic_leader'
-    }
-
-    # 查询限制(可选)
-    limit_input = input("请输入处理记录数量限制 (默认: 全部): ")
-    limit = int(limit_input) if limit_input.strip() else None
-
-    offset_input = input("请输入起始偏移量 (默认: 0): ")
-    offset = int(offset_input) if offset_input.strip() else 0
-
+def update_c_org_leader_info(db_config):
     # 连接数据库
     try:
         conn = get_database_connection(db_config)
 
         # 处理数据库记录
-        process_database_records(conn, limit, offset)
+        process_database_records(conn)
 
         # 关闭连接
         conn.close()

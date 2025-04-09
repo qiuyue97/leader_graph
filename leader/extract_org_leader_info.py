@@ -11,9 +11,6 @@ import argparse
 import json
 from typing import Dict, List, Any, Optional
 
-# 从项目根目录导入模块
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from html_extractor.extract_content_from_remark import BaiduBaikeExtractor
 from html_extractor.extract_table_from_remark import DBExtractor, HTMLExtractor
 from utils.logger import get_logger
@@ -23,16 +20,10 @@ from utils.file_utils import ensure_dir, safe_filename
 class LeaderInfoExtractor:
     """从数据库中提取和解析领导人信息的类"""
 
-    def __init__(self, output_dir: str = "./extracted_leaders"):
+    def __init__(self):
         """
         初始化提取器
-
-        Args:
-            output_dir: 输出目录
         """
-        self.output_dir = ensure_dir(output_dir)
-        self.table_dir = ensure_dir(os.path.join(output_dir, "tables"))
-        self.content_dir = ensure_dir(os.path.join(output_dir, "contents"))
 
         # 获取日志器
         self.logger = get_logger(__name__)
@@ -189,18 +180,6 @@ class LeaderInfoExtractor:
         # 合并表格提取的结果
         field_data.update(table_result)
 
-        # 保存表格数据
-        tables_file = os.path.join(self.table_dir, f"{safe_filename(leader_name)}_{leader_id}_tables.json")
-        with open(tables_file, 'w', encoding='utf-8') as f:
-            json.dump(table_result, f, ensure_ascii=False, indent=2)
-        self.logger.info(f"已保存表格数据到 {tables_file}")
-
-        # 保存内容数据
-        content_file = os.path.join(self.content_dir, f"{safe_filename(leader_name)}_{leader_id}_content.json")
-        with open(content_file, 'w', encoding='utf-8') as f:
-            json.dump(content_result, f, ensure_ascii=False, indent=2)
-        self.logger.info(f"已保存内容数据到 {content_file}")
-
         # 将数据更新到数据库
         if update_db:
             self.update_leader_info(leader_id, field_data)
@@ -260,41 +239,18 @@ class LeaderInfoExtractor:
                     "error": str(e)
                 })
 
-            # 等待一小段时间，避免过度消耗资源
-            time.sleep(0.1)
-
-        # 保存总结果
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        summary_file = os.path.join(self.output_dir, f"extraction_summary_{timestamp}.json")
-        with open(summary_file, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        self.logger.info(f"已保存总结果到 {summary_file}")
-
         # 关闭数据库连接
         self.db_extractor.disconnect()
 
         return results
 
 
-def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(description='从数据库提取领导人的HTML内容并解析')
-    parser.add_argument('--limit', type=int, help='限制处理的领导人数量')
-    parser.add_argument('--leader_id', type=int, help='指定领导人ID')
-    parser.add_argument('--output_dir', default='./data/extracted_leaders', help='输出目录')
-    parser.add_argument('--no_update_db', action='store_true', help='不更新数据库，仅生成提取结果')
-
-    args = parser.parse_args()
+def extract_org_leader_info():
 
     # 创建提取器并处理
-    extractor = LeaderInfoExtractor(args.output_dir)
-    results = extractor.process_leaders(args.limit, args.leader_id, not args.no_update_db)
+    extractor = LeaderInfoExtractor()
+    results = extractor.process_leaders()
 
     # 打印摘要
     success_count = sum(1 for r in results if r.get('success', False))
-    print(f"\n提取完成! 总共处理了 {len(results)} 个领导人，成功: {success_count}，失败: {len(results) - success_count}")
-    print(f"结果保存在目录: {args.output_dir}")
-
-
-if __name__ == "__main__":
-    main()
+    print(f"\n提取完成，总共处理了 {len(results)} 个领导人，成功: {success_count}，失败: {len(results) - success_count}")

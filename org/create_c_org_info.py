@@ -352,24 +352,19 @@ def insert_into_database(departments, db_config):
             print("数据库连接已关闭")
 
 
-def main():
-    """主函数"""
-    # 输入文件夹参数
-    input_directory = "../data/input_data"  # 输入文件夹路径
-
+def create_c_org_info(input_directory, db_config):
+    """
+    Args:
+    input_directory: 输入csv文件路径
+        包含“一级部门”、“二级部门”、“省份”、“部门类型”、“URL”五列
+    db_config: 数据库配置
+        包含host, user, password, database
+    """
     primary_col = "一级部门"  # 一级部门列名
     secondary_col = "二级部门"  # 二级部门列名
     province_col = "省份"  # 省份列名
     type_col = "部门类型"  # 部门类型列名
     url_col = "URL"  # URL列名
-
-    # 数据库配置
-    db_config = {
-        'host': 'localhost',
-        'user': 'root',
-        'password': 'wlh3338501',
-        'database': 'cnfic_leader'
-    }
 
     # 设置数据库和表结构
     setup_database(db_config)
@@ -433,7 +428,3 @@ def main():
 
     # 将唯一的部门信息插入到数据库
     insert_into_database(unique_departments, db_config)
-
-
-if __name__ == "__main__":
-    main()
