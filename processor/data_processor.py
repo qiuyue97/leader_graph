@@ -30,8 +30,6 @@ class ProcessorTask:
     person_name: str = ""  # 人物姓名
     person_id: str = ""  # 人物ID
     data: Dict[str, Any] = None  # 任务相关的其他数据
-    cached: bool = False  # 是否已缓存
-    html_path: str = ""  # HTML文件路径
 
     def __post_init__(self):
         if self.data is None:
@@ -46,9 +44,9 @@ class DataProcessor:
 
     def __init__(self, config, proxy_pool: Optional[ProxyPool] = None,
                  num_producers: int = 3, num_consumers: int = 2,
-                 output_dir: str = './data/person_data',
                  save_interval: int = 10,
-                 min_content_size: int = 1024):
+                 min_content_size: int = 1024,
+                 update: bool = False):
         """
         初始化数据处理器
 
@@ -57,14 +55,15 @@ class DataProcessor:
             proxy_pool: 代理池实例
             num_producers: 生产者线程数
             num_consumers: 消费者线程数
-            output_dir: 输出目录
             save_interval: 自动保存间隔（处理多少条记录后保存一次）
         """
+        # 是否过滤掉已有信息的领导人
+        self.filter_existing = not update
+
         self.db_manager = DBManager(config.db_config)
         self.proxy_pool = proxy_pool
         self.num_producers = num_producers
         self.num_consumers = num_consumers
-        self.output_dir = output_dir
         self.save_interval = save_interval
 
         # 任务队列和结果队列
@@ -85,36 +84,15 @@ class DataProcessor:
         self.max_retries = 3
         self.start_time = None
 
-        # HTML缓存管理器
-        self.html_cache = HTMLCacheManager(output_dir)
-
-        # 确保输出目录存在
-        ensure_dir(self.output_dir)
-
         # 创建爬虫和解析器
         self.scraper = BaikeScraper(
             proxy_pool=proxy_pool,
-            output_dir=output_dir,
             min_content_size=min_content_size
         )
         self.parser = BaikeParser()
 
         logger.info(
             f"数据处理器初始化完成，生产者:{num_producers}，消费者:{num_consumers}，最小内容大小:{min_content_size}字节")
-
-    def _reorder_columns(self, df):
-        """
-        重新排列DataFrame的列，确保特定的元数据列位于最后
-
-        Args:
-            df: 原始DataFrame
-
-        Returns:
-            重新排序后的DataFrame
-        """
-        meta_columns = ['html_cached', 'html_path', 'parsed']
-        other_columns = [col for col in df.columns if col not in meta_columns]
-        return df[other_columns + meta_columns]
 
     def load_tasks_from_db(self, filter_existing=True) -> List[ProcessorTask]:
         """
@@ -155,8 +133,7 @@ class DataProcessor:
                     url=url,
                     person_name=person_name,
                     person_id=person_id,
-                    data=dict(record),
-                    cached=False
+                    data=dict(record)
                 )
                 tasks.append(task)
 
@@ -200,7 +177,7 @@ class DataProcessor:
             self.start_time = time.time()
 
             # 从数据库加载任务
-            tasks = self.load_tasks_from_db()
+            tasks = self.load_tasks_from_db(filter_existing=self.filter_existing)
             if not tasks:
                 logger.warning("没有任务需要处理")
                 return
@@ -307,20 +284,16 @@ class DataProcessor:
                     html_content = result.get("fetch_result", {}).get("html_content", "")
 
                     if success and html_content and leader_id:
-                        # 再次检查数据库中是否已有内容（可能其他线程已经处理过）
-                        if not self.db_manager.check_html_exists(leader_id):
-                            # 将HTML内容更新到数据库
-                            success = self.db_manager.update_html_content(leader_id, html_content)
-                            if success:
-                                with self.task_lock:
-                                    self.success_count += 1
-                                    logger.info(f"成功更新ID为 {leader_id} 的HTML内容")
-                            else:
-                                with self.task_lock:
-                                    self.failure_count += 1
-                                    logger.error(f"更新ID为 {leader_id} 的HTML内容失败")
+                        # 将HTML内容更新到数据库
+                        success = self.db_manager.update_html_content(leader_id, html_content)
+                        if success:
+                            with self.task_lock:
+                                self.success_count += 1
+                                logger.info(f"成功更新ID为 {leader_id} 的HTML内容")
                         else:
-                            logger.info(f"跳过更新ID为 {leader_id} 的记录，因为已有HTML内容")
+                            with self.task_lock:
+                                self.failure_count += 1
+                                logger.error(f"更新ID为 {leader_id} 的HTML内容失败")
                     else:
                         with self.task_lock:
                             self.failure_count += 1
@@ -347,106 +320,6 @@ class DataProcessor:
                 logger.error(f"爬取消费者 {consumer_id} 循环中出错: {str(e)}")
 
         logger.info(f"爬取消费者 {consumer_id} 结束工作")
-
-    def only_parse_producer(self, producer_id: int, tasks: List[ProcessorTask]):
-        """
-        仅解析HTML的生产者函数
-
-        Args:
-            producer_id: 生产者ID
-            tasks: 要处理的任务列表
-        """
-        logger.info(f"解析生产者 {producer_id} 开始处理 {len(tasks)} 个任务")
-
-        # 创建解析器
-        parser = BaikeParser()
-
-        for task in tasks:
-            if self.stop_event.is_set():
-                logger.info(f"解析生产者 {producer_id} 收到停止信号")
-                break
-
-            # 确保任务有HTML文件
-            if not task.cached or not task.html_path or not os.path.exists(task.html_path):
-                logger.warning(f"解析生产者 {producer_id} 跳过无缓存任务: {task.idx}")
-                continue
-
-            try:
-                logger.info(f"解析生产者 {producer_id} 处理任务: {task.idx}, HTML: {task.html_path}")
-
-                # 读取HTML内容
-                html_content = None
-                try:
-                    with open(task.html_path, 'r', encoding='utf-8') as f:
-                        html_content = f.read()
-                except Exception as e:
-                    logger.error(f"解析生产者 {producer_id} 读取HTML文件失败: {task.html_path}, 错误: {str(e)}")
-                    result = {
-                        "task": task,
-                        "success": False,
-                        "error": f"读取HTML文件失败: {str(e)}",
-                        "timestamp": datetime.now().isoformat(),
-                        "stage": "parse"
-                    }
-                    self.result_queue.put(result)
-                    continue
-
-                # 解析HTML内容
-                if html_content:
-                    parse_result = parser.parse_page(html_content)
-
-                    # 检查解析是否成功
-                    if parse_result["success"]:
-                        result = {
-                            "task": task,
-                            "parse_result": parse_result,
-                            "success": True,
-                            "timestamp": datetime.now().isoformat(),
-                            "stage": "parse"
-                        }
-                        logger.info(f"解析生产者 {producer_id} 成功解析任务: {task.idx}")
-                    else:
-                        error_msg = parse_result.get("error", "解析失败，未知原因")
-                        logger.warning(f"解析生产者 {producer_id} 解析失败: {task.idx}, 错误: {error_msg}")
-                        result = {
-                            "task": task,
-                            "parse_result": parse_result,
-                            "success": False,
-                            "error": error_msg,
-                            "timestamp": datetime.now().isoformat(),
-                            "stage": "parse"
-                        }
-
-                    # 放入结果队列
-                    self.result_queue.put(result)
-
-            except Exception as e:
-                logger.error(f"解析生产者 {producer_id} 处理任务 {task.idx} 时出错: {str(e)}")
-                result = {
-                    "task": task,
-                    "success": False,
-                    "error": f"解析异常: {str(e)}",
-                    "timestamp": datetime.now().isoformat(),
-                    "stage": "parse"
-                }
-                self.result_queue.put(result)
-
-            finally:
-                # 更新处理计数
-                with self.task_lock:
-                    self.processed_count += 1
-                    if self.processed_count % 10 == 0 or self.processed_count == self.total_count:
-                        progress = (self.processed_count / self.total_count) * 100
-                        elapsed = time.time() - self.start_time
-                        remaining = (elapsed / self.processed_count) * (
-                                self.total_count - self.processed_count) if self.processed_count > 0 else 0
-                        logger.info(
-                            f"解析进度: {self.processed_count}/{self.total_count} ({progress:.2f}%), 已用时: {elapsed:.2f}秒, 预计剩余: {remaining:.2f}秒")
-
-                # 控制处理速度
-                time.sleep(random.uniform(0.1, 0.3))  # 解析无需太多延迟
-
-        logger.info(f"解析生产者 {producer_id} 已完成所有任务")
 
     def only_fetch_producer(self, producer_id: int, tasks: List[ProcessorTask]):
         """
@@ -476,11 +349,6 @@ class DataProcessor:
             # 初始化重试计数
             if task_id not in retry_counts:
                 retry_counts[task_id] = 0
-
-            # 如果任务已缓存，跳过
-            if task.cached or os.path.exists(self.html_cache.get_cache_path(task.person_name, task.person_id)):
-                logger.info(f"爬取生产者 {producer_id} 跳过已缓存任务: {task.idx}")
-                continue
 
             # 如果需要代理但当前无代理，则等待获取新代理
             if self.proxy_pool and current_proxy is None:
@@ -519,7 +387,6 @@ class DataProcessor:
                 # 检查获取是否成功
                 if not fetch_result["success"]:
                     error_msg = fetch_result.get("error", "未知错误")
-                    content_size = fetch_result.get("content_size", 0)
 
                     logger.warning(f"爬取生产者 {producer_id} 获取页面失败: {task.idx}, 错误: {error_msg}")
 
@@ -563,8 +430,7 @@ class DataProcessor:
                     "fetch_result": fetch_result,
                     "success": True,
                     "timestamp": datetime.now().isoformat(),
-                    "stage": "fetch",
-                    "html_path": fetch_result.get("saved_file", "")
+                    "stage": "fetch"
                 }
 
                 # 放入结果队列

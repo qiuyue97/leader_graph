@@ -283,13 +283,14 @@ class DBManager:
             return False
 
 
-def fetch_and_store_html(db_config: Dict[str, str], org_uuids: Optional[List[str]] = None):
+def fetch_and_store_html(db_config: Dict[str, str], org_uuids: Optional[List[str]] = None, update: bool = False):
     """
     从URL获取HTML内容并存储到数据库的remark字段
 
     Args:
         db_config: 数据库配置
         org_uuids: 要处理的组织UUID列表，如果为None则处理所有记录
+        update: 是否更新remark的值
     """
     # 创建数据库管理器
     db_manager = DBManager(db_config)
@@ -322,7 +323,7 @@ def fetch_and_store_html(db_config: Dict[str, str], org_uuids: Optional[List[str
             logger.info(f"处理组织: {org_name} (ID: {org_id}, UUID: {org_uuid})")
 
             # 如果remark字段已有值，跳过
-            if remark:
+            if remark and not update:
                 logger.info(f"组织 {org_name} 的remark字段已有值，跳过")
                 continue
 

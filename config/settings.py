@@ -11,17 +11,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Config:
     """应用配置类"""
-
-    # 输入/输出设置
-    input_csv_path: str = "shanghai_leadership_list.csv"
-    output_dir: str = "./data"
+    # 输入文件夹
+    input_data_dir: str = "./data/input_data"
 
     # 线程设置
     num_producers: int = 10
     num_consumers: int = 1
 
     # 爬虫设置
-    use_mobile: bool = True
     max_retries: int = 3
     min_content_size: int = 1024
 
@@ -45,6 +42,7 @@ class Config:
     azure_openai_api_key: str = "your_key"
     azure_openai_api_version: str = "2024-10-21"
     qwen_api_key: str = "your_key"
+    cost_limit: float = 1.0
 
     # AI处理设置
     ai_max_threads: int = 10
@@ -152,11 +150,9 @@ class Config:
             是否成功创建
         """
         config = cls(
-            input_csv_path="./shanghai_leadership_list.csv",
-            output_dir="./data",
+            input_data_dir='./data/input_data',
             num_producers=10,
             num_consumers=1,
-            use_mobile=True,
             max_retries=3,
             use_proxy=True,
             proxy_config={
@@ -173,7 +169,27 @@ class Config:
             save_interval=10,
             request_delay_min=1.0,
             request_delay_max=3.0,
-            min_content_size=1024
+            min_content_size=1024,
+            azure_openai_endpoint="your_url",
+            azure_openai_api_key="your_key",
+            azure_openai_api_version="2024-10-21",
+            qwen_api_key="your_key",
+            ai_max_threads=10,
+            ai_request_rate=8,
+            ai_token_limit=90000,
+            cost_limit=1.0,
+            neo4j_config={
+                "uri": "bolt://localhost:27687",
+                "user": "neo4j",
+                "password": "password",
+            },
+            db_config={
+                "host": "localhost",
+                "user": "root",
+                "password": "password",
+                "database": "cnfic_leader",
+                "charset": "utf8mb4"
+            }
         )
 
         return config.to_file(filepath)

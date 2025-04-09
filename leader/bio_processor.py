@@ -520,22 +520,6 @@ class BiographicalDataProcessor:
 
             try:
                 with conn.cursor() as cursor:
-                    # 检查是否已有结构化数据
-                    check_sql = """
-                    SELECT career_history_structured 
-                    FROM c_org_leader_info 
-                    WHERE id = %s AND career_history_structured IS NOT NULL AND career_history_structured != ''
-                    """
-                    cursor.execute(check_sql, (leader['id'],))
-                    existing = cursor.fetchone()
-
-                    if existing and existing['career_history_structured']:
-                        logger.info(f"领导人ID={leader['id']}已有结构化履历数据，跳过更新")
-                        with self.stats_lock:
-                            self.processed_count += 1
-                            self.success_count += 1
-                        return True
-
                     # 更新领导人的结构化履历数据
                     sql = """
                     UPDATE c_org_leader_info
@@ -570,7 +554,7 @@ class BiographicalDataProcessor:
 
             return False
 
-    def get_leaders(self, limit: Optional[int] = None, skip_processed: bool = True) -> List[Dict]:
+    def get_leaders(self, limit: Optional[int] = None, skip_processed: bool = True) -> Tuple [Tuple [Any, ...], ...]:
         """
         从数据库获取领导人列表
 
@@ -616,7 +600,7 @@ class BiographicalDataProcessor:
 
         except Exception as e:
             logger.error(f"从数据库获取领导人列表时出错: {str(e)}")
-            return []
+            return ()
         finally:
             self.close_database_connection(conn)
 
@@ -691,7 +675,7 @@ class BiographicalDataProcessor:
             f"处理完成. 总数: {total_count}, 成功: {self.success_count}, 失败: {self.error_count}, 总耗时: {elapsed_time:.2f}秒, 平均耗时: {elapsed_time / total_count:.2f}秒/条")
 
 
-def bio_processor(config_path, cost_limit):
+def bio_processor(config_path, cost_limit, update):
     # 从配置文件加载配置
     try:
         config = Config.from_file(config_path)
@@ -727,7 +711,7 @@ def bio_processor(config_path, cost_limit):
     )
 
     # 处理领导人履历数据
-    processor.process_leaders()
+    processor.process_leaders(skip_processed=not update)
 
     # 输出最终的token使用和成本统计
     processor.token_tracker.log_stats()

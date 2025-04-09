@@ -5,7 +5,7 @@ from proxy.pool import ProxyPool
 from processor.data_processor import DataProcessor
 from utils.logger import setup_logger
 
-def update_c_org_leader_info_remark(config_path):
+def update_c_org_leader_info_remark(config_path, update):
     # 设置日志
     log_dir = 'logs'
     os.makedirs(log_dir, exist_ok=True)
@@ -18,13 +18,6 @@ def update_c_org_leader_info_remark(config_path):
     )
 
     try:
-        # 如果配置文件不存在，创建一个示例配置
-        if not os.path.exists(config_path):
-            logger.info("配置文件不存在，创建示例配置")
-            Config.create_example_config(config_path)
-            logger.info(f"已创建示例配置文件: {config_path}，请修改后重新运行程序")
-            return
-
         config = Config.from_file(config_path)
         logger.info(
             f"已加载配置: {config.num_producers} 个生产者, {config.num_consumers} 个消费者")
@@ -61,9 +54,9 @@ def update_c_org_leader_info_remark(config_path):
             proxy_pool=proxy_pool,
             num_producers=config.num_producers,
             num_consumers=config.num_consumers,
-            output_dir=config.output_dir,
             save_interval=config.save_interval,
-            min_content_size=min_content_size
+            min_content_size=min_content_size,
+            update=update
         )
 
         processor.process_db_fetch_stage()
