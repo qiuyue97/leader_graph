@@ -3,19 +3,11 @@
 extract_org_leader_info.py
 用于从数据库中提取领导人的HTML内容并解析特定信息，更新到c_org_leader_info表
 """
-
-import os
-import sys
-import time
-import argparse
-import json
 from typing import Dict, List, Any, Optional
 
 from html_extractor.extract_content_from_remark import BaiduBaikeExtractor
 from html_extractor.extract_table_from_remark import DBExtractor, HTMLExtractor
 from utils.logger import get_logger
-from utils.file_utils import ensure_dir, safe_filename
-
 
 class LeaderInfoExtractor:
     """从数据库中提取和解析领导人信息的类"""

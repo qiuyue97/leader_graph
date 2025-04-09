@@ -2,7 +2,6 @@ import hashlib
 import pandas as pd
 import mysql.connector
 import os
-from urllib.parse import quote
 
 
 def generate_department_id(name):

@@ -2,13 +2,13 @@ import os
 import logging
 import json
 import sys
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 from openai import AzureOpenAI
 
 # 导入所需模块
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config.settings import Config
-from schema import BiographicalEvents
+from leader.schema import BiographicalEvents
 
 # 设置日志
 logging.basicConfig(

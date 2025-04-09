@@ -1,6 +1,5 @@
 import logging
 import time
-import argparse
 import random
 from typing import Dict, List, Optional
 import mysql.connector

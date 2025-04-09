@@ -1,4 +1,3 @@
-import os
 import random
 import time
 from typing import Dict, Optional, Any
@@ -6,7 +5,7 @@ from datetime import datetime
 
 from .selenium_scraper import SeleniumScraper
 from proxy.pool import ProxyPool
-from utils.content_validator import ContentValidator  # 导入内容验证器
+from utils.content_validator import ContentValidator
 
 # 获取日志器
 from utils.logger import get_logger

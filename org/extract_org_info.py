@@ -1,15 +1,9 @@
-#!/usr/bin/env python3
 """
 html_extractor_cli.py
 用于从数据库中提取HTML内容并解析特定信息的命令行工具
 """
 
-import argparse
-import json
-import os
-import sys
 import time
-from typing import Dict, List, Any
 from html_extractor.extract_table_from_remark import DBExtractor, HTMLExtractor
 from html_extractor.extract_content_from_remark import BaiduBaikeExtractor
 from utils.logger import get_logger

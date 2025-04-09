@@ -1,7 +1,6 @@
 import threading
 import time
 from typing import List, Dict, Union, Optional
-import random
 from .providers import ProxyProvider
 
 # 获取日志器
