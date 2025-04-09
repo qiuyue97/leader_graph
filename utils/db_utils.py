@@ -1,5 +1,5 @@
 import mysql.connector
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 from utils.logger import get_logger
 
 logger = get_logger(__name__)

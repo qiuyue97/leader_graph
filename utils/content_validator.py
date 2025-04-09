@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 # 获取日志器
 from utils.logger import get_logger

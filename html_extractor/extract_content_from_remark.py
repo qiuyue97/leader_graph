@@ -7,9 +7,8 @@ extract_content_from_remark.py
 import re
 import os
 import json
-import logging
 from bs4 import BeautifulSoup
-from typing import Dict, List, Any, Optional, Union, Tuple
+from typing import Dict, List, Any
 
 # 尝试导入logger，如果不存在则使用内置logging
 try:

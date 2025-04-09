@@ -6,13 +6,11 @@ sql2neo4j.py
 
 import os
 import sys
-import json
 import time
 import logging
 import pymysql
 from neo4j import GraphDatabase
 import json
-from tqdm import tqdm
 
 # 添加项目根目录到模块搜索路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))

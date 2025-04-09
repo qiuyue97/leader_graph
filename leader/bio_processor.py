@@ -1,15 +1,13 @@
-import os
 import time
 import logging
 import threading
 import json
 import random
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple
 from openai import AzureOpenAI
 import openai
 import pymysql
 from concurrent.futures import ThreadPoolExecutor
-import sys
 
 from config.settings import Config
 

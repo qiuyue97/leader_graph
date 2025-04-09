@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from bs4 import BeautifulSoup
 
 # 获取日志器

@@ -1,10 +1,5 @@
-import pandas as pd
-import time
-import random
 import re
-import uuid
 import hashlib
-import os
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 import pymysql

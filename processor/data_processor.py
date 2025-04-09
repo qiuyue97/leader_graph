@@ -1,21 +1,15 @@
-import logging
 import threading
 import queue
 import time
 import random
-import os
-from typing import List, Dict, Any, Optional, Callable
-import pandas as pd
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from dataclasses import dataclass
-from enum import Enum
 
 from proxy.pool import ProxyPool
 from scraper.baike_scraper import BaikeScraper
 from parser.baike_parser import BaikeParser
 from utils.logger import get_logger
-from utils.file_utils import ensure_dir
-from utils.html_cache import HTMLCacheManager
 from utils.db_utils import DBManager
 
 # 获取日志器

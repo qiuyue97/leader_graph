@@ -3,10 +3,9 @@ html_extractor.py
 用于从数据库中提取HTML内容并解析特定信息
 """
 
-import logging
 import re
 import json
-from typing import Dict, List, Any, Optional, Union, Tuple
+from typing import Dict, List, Any
 from bs4 import BeautifulSoup
 import mysql.connector
 

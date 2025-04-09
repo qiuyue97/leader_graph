@@ -1,14 +1,10 @@
-#!/usr/bin/env python3
 """
 update_leader_img_url.py
 从数据库中提取领导人HTML内容，并抽取领导人头像图片的URL
 """
 
-import re
-import argparse
 import pymysql
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
 from typing import Dict, List, Optional, Tuple
 
 

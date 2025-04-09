@@ -8,7 +8,6 @@ import os
 import sys
 import pymysql
 from datetime import datetime
-from typing import Dict, List, Any, Optional
 
 # 将项目根目录添加到模块搜索路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
