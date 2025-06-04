@@ -417,11 +417,10 @@ class BiographicalDataProcessor:
                     # 调用API
                     logger.info(f"线程 {threading.get_ident()} 正在调用Azure OpenAI API...")
                     response = client.chat.completions.create(
-                        model="gpt-4o",  # 替换为您的模型部署名称
+                        model="gpt-4o",
                         messages=messages,
                         tools=tools,
                         parallel_tool_calls=False  # 使用结构化输出时需要设置为False
-                        # 移除了不兼容的 response_format 参数
                     )
 
                     # 获取完整的响应对象（包含token使用情况）

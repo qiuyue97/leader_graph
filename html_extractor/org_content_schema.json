@@ -1,10 +1,10 @@
 {
     "province_profile": ["省情概况"],
-    "org_duty": ["主要职责"],
+    "org_duty": ["主要职责", "主要职能", "机构职能", "机构职责", "职能介绍", "工作职责"],
     "internal_dept": ["内设机构", "机构设置"],
     "org_history": ["历史沿革"],
     "org_coop": ["战略合作"],
     "org_staff": ["人员编制"],
-    "org_honor": ["获得荣誉"],
+    "org_honor": ["获得荣誉", "所获荣誉"],
     "office_addr": ["交通位置", "地理位置"]
 }

@@ -48,8 +48,6 @@ class BaikeScraper:
         Returns:
             成功时返回 HTML 内容，失败时返回 None
         """
-        # 将参数统一为False，确保使用桌面版
-        use_mobile = False
         for attempt in range(self.max_retries):
             try:
                 # 使用外部提供的代理，或者从代理池获取
@@ -115,7 +113,7 @@ class BaikeScraper:
         return None
 
     def fetch_with_metadata(self, url: str, person_name: str = None, person_id: str = None,
-                            use_mobile: bool = True,
+                            use_mobile: bool = False,
                             provided_proxy: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         抓取页面并返回元数据（不进行解析）

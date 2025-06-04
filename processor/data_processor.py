@@ -374,7 +374,7 @@ class DataProcessor:
                     url=task.url,
                     person_name=task.person_name,
                     person_id=task.person_id,
-                    use_mobile=True,
+                    use_mobile=False,
                     provided_proxy=current_proxy  # 传递当前代理
                 )
 

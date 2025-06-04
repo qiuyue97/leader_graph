@@ -1,0 +1,30 @@
+input_data_dir: './data/input_data'
+max_retries: 3
+num_consumers: 1
+num_producers: 1
+proxy_config:
+  min_proxies: 20
+  providers:
+  - app_key: ''
+    app_secret: ''
+    type: 'xiaoxiang'
+  refresh_interval: 15
+request_delay_max: 3.0
+request_delay_min: 1.0
+min_content_size: 1024
+save_interval: 10
+use_proxy: false
+azure_openai_endpoint: ""
+azure_openai_api_key: ""
+qwen_api_key: ""
+neo4j_config:
+  uri: "bolt://localhost:7687"
+  user: "neo4j"
+  password: ""
+db_config:
+  host: "localhost"
+  user: "root"
+  password: ""
+  database: "cnfic_leader"
+  charset: "utf8mb4"
+cost_limit: 0.01

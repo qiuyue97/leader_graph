@@ -9,16 +9,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("html_fetcher.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("html_fetcher")
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 class SeleniumFetcher:

@@ -119,7 +119,6 @@ class ProxyPool:
 
         with self.lock:
             if new_proxies:
-                # 累积代理而不是替换
                 self.proxies.extend(new_proxies)
                 # 移除重复的代理和黑名单代理
                 unique_proxies = []
