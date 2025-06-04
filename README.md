@@ -85,16 +85,13 @@ cd leader_graph
 ### 2. 创建虚拟环境
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或
-venv\Scripts\activate     # Windows
+conda activate -n leader_graph python=3.12.9
 ```
 
 ### 3. 安装依赖
 
 ```bash
-pip install -r requirements.txt
+pip install selenium beautifulsoup4 pymysql pandas pyyaml openai requests webdriver-manager pydantic tqdm lxml
 ```
 
 ### 4. 数据库配置
