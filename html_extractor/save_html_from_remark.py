@@ -27,11 +27,11 @@ DB_CONFIG = {
 }
 
 # 固定配置
-DB_TABLE = "c_org_leader_info"
+DB_TABLE = "c_org_info"
 REMARK_FIELD = "remark"
 ID_FIELD = "id"
-NAME_FIELD = "leader_name"
-OUTPUT_DIR = "../data/person_data_pc"
+NAME_FIELD = "org_name"
+OUTPUT_DIR = f"../data/{DB_TABLE}"
 
 
 class HtmlDumper:
@@ -226,7 +226,7 @@ def main():
     # 命令行参数
     parser = argparse.ArgumentParser(description='从数据库提取HTML内容并保存到文件')
     parser.add_argument('--id', type=int, help='指定记录ID')
-    parser.add_argument('--limit', type=int, default=10, help='限制提取的记录数，默认为10')
+    parser.add_argument('--limit', type=int, default=None, help='限制提取的记录数，默认为全部')
     parser.add_argument('--condition', help='SQL WHERE条件')
     parser.add_argument('--output-dir', help='输出目录路径')
 

@@ -141,12 +141,14 @@ class LeaderInfoExtractor:
         # 使用HTMLExtractor提取表格信息
         table_result = self.table_extractor.extract_info_from_html(html_content, self.table_extractor.field_mapping)
 
-        # 特别处理 description(职务) 和 summary(简介)
+        # 特别处理 update_time(更新时间) description(职务) 和 summary(简介)
+        update_time = content_result.get("update_time", "")
         description = content_result.get("description", "")
         summary = content_result.get("summary", "")
 
         # 将提取的内容映射到字段
         field_data = {
+            "remark_update_time": update_time,
             "leader_position": description,
             "current_position": description,  # 同样的内容写入两个字段
             "leader_profile": summary

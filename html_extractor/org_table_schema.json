@@ -7,8 +7,8 @@
     "parent_org": ["上级机关", "上级机构"],
     "sup_org" : ["主管部门", "主管单位"],
     "establish_date": ["成立时间"],
-    "office_addr": ["办公地址"],
-    "org_nature": ["性质"],
+    "office_addr": ["办公地址", "地址", "社团地址"],
+    "org_nature": ["性质", "属性", "机构属性"],
     "adm_level": ["行政级别"],
     "current_leader": ["现任领导", "市长", "主任"]
 }

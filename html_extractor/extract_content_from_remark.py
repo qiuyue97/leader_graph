@@ -10,6 +10,8 @@ import json
 from bs4 import BeautifulSoup
 from typing import Dict, List, Any
 
+from selenium.webdriver.common.devtools.v85.service_worker import set_force_update_on_page_load
+
 # 尝试导入logger，如果不存在则使用内置logging
 try:
     from utils.logger import get_logger
@@ -31,134 +33,7 @@ except ImportError:
     try:
         from extract_table_from_remark import DBExtractor
     except ImportError:
-        import mysql.connector
-        from typing import Dict, List
-
-        logger.warning("无法导入DBExtractor，使用内置实现")
-
-
-        class DBExtractor:
-            """从数据库获取HTML并提取信息的类的简化版本"""
-
-            def __init__(self, db_config: Dict[str, str] = None):
-                """初始化数据库提取器"""
-                self.db_config = db_config or {
-                    'host': 'localhost',
-                    'user': 'root',
-                    'password': '',
-                    'database': 'default_db'
-                }
-                self.connection = None
-                self.cursor = None
-
-            def connect(self) -> bool:
-                """连接到数据库"""
-                try:
-                    self.connection = mysql.connector.connect(
-                        host=self.db_config['host'],
-                        user=self.db_config['user'],
-                        password=self.db_config['password'],
-                        database=self.db_config['database']
-                    )
-                    self.cursor = self.connection.cursor(dictionary=True)
-                    logger.info(f"已连接到数据库: {self.db_config['database']}")
-                    return True
-                except mysql.connector.Error as e:
-                    logger.error(f"连接数据库失败: {str(e)}")
-                    return False
-
-            def disconnect(self) -> None:
-                """关闭数据库连接"""
-                if self.cursor:
-                    self.cursor.close()
-                if self.connection and self.connection.is_connected():
-                    self.connection.close()
-                    logger.info("已断开数据库连接")
-
-            def get_html_by_org_id(self, org_id: int) -> str:
-                """通过组织ID获取HTML内容"""
-                try:
-                    query = """
-                    SELECT remark 
-                    FROM c_org_info 
-                    WHERE id = %s AND is_deleted = 0
-                    """
-                    self.cursor.execute(query, (org_id,))
-                    result = self.cursor.fetchone()
-
-                    if result and result.get('remark'):
-                        logger.info(f"成功获取组织ID={org_id}的HTML内容")
-                        return result['remark']
-                    else:
-                        logger.warning(f"未找到组织ID={org_id}的HTML内容或内容为空")
-                        return ""
-
-                except mysql.connector.Error as e:
-                    logger.error(f"获取HTML内容时出错: {str(e)}")
-                    return ""
-
-            def get_org_name_by_id(self, org_id: int) -> str:
-                """通过组织ID获取组织名称"""
-                try:
-                    query = """
-                    SELECT org_name 
-                    FROM c_org_info 
-                    WHERE id = %s AND is_deleted = 0
-                    """
-                    self.cursor.execute(query, (org_id,))
-                    result = self.cursor.fetchone()
-
-                    if result and result.get('org_name'):
-                        return result['org_name']
-                    else:
-                        return f"未知组织(ID={org_id})"
-
-                except mysql.connector.Error as e:
-                    logger.error(f"获取组织名称时出错: {str(e)}")
-                    return f"未知组织(ID={org_id})"
-
-            def get_all_organizations(self) -> List[Dict]:
-                """获取所有组织记录"""
-                try:
-                    query = """
-                    SELECT id, uuid, org_name
-                    FROM c_org_info 
-                    WHERE is_deleted = 0
-                    """
-                    self.cursor.execute(query)
-                    return self.cursor.fetchall()
-                except mysql.connector.Error as e:
-                    logger.error(f"获取组织记录时出错: {str(e)}")
-                    return []
-
-            def update_extraction_result(self, org_id: int, field_name: str, field_value: str) -> bool:
-                """更新提取结果到数据库"""
-                try:
-                    # 检查字段是否存在
-                    check_query = f"""
-                    SHOW COLUMNS FROM c_org_info LIKE %s
-                    """
-                    self.cursor.execute(check_query, (field_name,))
-                    if not self.cursor.fetchone():
-                        logger.warning(f"字段'{field_name}'不存在于数据库中")
-                        return True
-
-                    # 更新字段值
-                    update_query = f"""
-                    UPDATE c_org_info
-                    SET {field_name} = %s
-                    WHERE id = %s
-                    """
-                    self.cursor.execute(update_query, (field_value, org_id))
-                    self.connection.commit()
-
-                    logger.info(f"成功更新组织ID={org_id}的{field_name}")
-                    return True
-
-                except mysql.connector.Error as e:
-                    logger.error(f"更新提取结果时出错: {str(e)}")
-                    return False
-
+        logger.warning("无法导入DBExtractor")
 
 class BaiduBaikeExtractor:
     """从百度百科HTML内容提取结构化数据的类"""
@@ -210,10 +85,13 @@ class BaiduBaikeExtractor:
     def extract_from_html(self, html_content):
         """从HTML内容中提取标题、描述、简介和内容结构"""
         if not html_content:
-            return {"title": "", "description": "", "summary": "", "sections": []}
+            return {"update_time": "", "title": "", "description": "", "summary": "", "sections": []}
 
         # 使用BeautifulSoup解析HTML
         soup = BeautifulSoup(html_content, 'html.parser')
+
+        # 提取更新时间
+        update_time = self._extract_date_update(soup)
 
         # 提取主标题
         main_title = self._extract_main_title(soup)
@@ -232,11 +110,23 @@ class BaiduBaikeExtractor:
             sections = self._extract_fallback_content(soup)
 
         return {
+            "update_time": update_time,
             "title": main_title,
             "description": description,
             "summary": summary,
             "sections": sections
         }
+
+    def _extract_date_update(self, soup):
+        """提取页面的更新日期时间"""
+        date_update = ""
+
+        # 查找dateUpdate元数据
+        date_meta = soup.find('meta', attrs={'itemprop': 'dateUpdate'})
+        if date_meta and date_meta.get('content'):
+            date_update = date_meta.get('content').strip()
+
+        return date_update
 
     def _extract_main_title(self, soup):
         """提取页面主标题"""
@@ -845,6 +735,7 @@ class BaiduBaikeExtractor:
         if update_db:
             for field_name, field_value in mapped_fields.items():
                 if field_value:  # 只更新非空值
+                    # TODO: 按照remark_update_time更新
                     # 对于office_addr字段特殊处理
                     if field_name == 'office_addr':
                         # 先检查字段是否为空
@@ -884,6 +775,10 @@ class BaiduBaikeExtractor:
         # 处理summary单独映射到org_profile
         if extraction_result.get('summary'):
             mapped_fields['org_profile'] = extraction_result['summary']
+
+        # 处理update_time单独映射到remark_update_time
+        if extraction_result.get('update_time'):
+            mapped_fields['remark_update_time'] = extraction_result['update_time']
 
         # 处理sections与字段映射
         for section in extraction_result.get('sections', []):
