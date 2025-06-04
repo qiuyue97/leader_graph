@@ -327,18 +327,6 @@ A: 修改`html_extractor/`目录下的JSON schema文件，定义字段映射关�
 ### Q: 如何扩展新的数据源？
 A: 参考现有的Provider模式，在`proxy/providers.py`中添加新的代理服务商，或在parser模块中添加新的网站解析器。
 
-## 开发贡献
-
-欢迎提交Issue和Pull Request来改进项目。主要改进方向：
-- 新的数据源集成
-- 解析算法优化  
-- 性能和稳定性提升
-- 文档和示例完善
-
-## 许可证
-
-本项目采用MIT许可证，详见LICENSE文件。
-
 ## 技术栈
 
 - **Python 3.8+** - 主要开发语言
