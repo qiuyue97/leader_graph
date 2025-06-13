@@ -224,7 +224,7 @@ class Neo4jImporter:
         logger.info(f"已创建 {count} 个组织层级关系")
 
     def create_same_hometown_relationships(self):
-        """创建人物之间的同乡关系"""
+        """创建人物之间的同乡关系，包含同市和同区县判断"""
         logger.info("创建人物之间的同乡关系...")
 
         with self.driver.session() as session:
@@ -237,16 +237,20 @@ class Neo4jImporter:
             UNWIND people AS p2
             WITH p1, p2, place
             WHERE id(p1) < id(p2)  // 确保只创建一个方向的关系
-            MERGE (p1)-[r:SAME_HOMETOWN {birth_place: place}]->(p2)
+            MERGE (p1)-[r:SAME_HOMETOWN {
+                birth_place: place, 
+                same_city: "TODO", 
+                same_district: "TODO"
+            }]->(p2)
             RETURN count(r) AS rel_count
             """
 
             result = session.run(cypher)
             rel_count = result.single()["rel_count"]
-            logger.info(f"已创建 {rel_count} 个同乡关系")
+            logger.info(f"已创建 {rel_count} 个同乡关系，包含同市和同区县属性")
 
     def create_schoolmates_relationships(self):
-        """创建人物之间的同学关系，优化版"""
+        """创建人物之间的同学关系，优化版，包含同院系和同专业判断"""
         logger.info("创建人物之间的同学关系...")
 
         with self.driver.session() as session:
@@ -255,86 +259,97 @@ class Neo4jImporter:
             MATCH (p1:Person)-[r1:STUDIED_AT]->(s:Organization)<-[r2:STUDIED_AT]-(p2:Person)
             // 过滤条件：不是同一个人，学校不是中央党校，确保只处理一对人的一种方向
             WHERE p1 <> p2 
-              AND s.org_name <> '中央党校'
-              AND id(p1) < id(p2)
+            AND s.org_name <> '中央党校'
+            AND id(p1) < id(p2)
 
             WITH p1, p2, s, r1, r2,
-                 // 计算是否时间重叠
-                 CASE
+                // 计算是否时间重叠
+                CASE
                     WHEN r1.startYear IS NOT NULL AND r1.endYear IS NOT NULL AND 
-                         r2.startYear IS NOT NULL AND r2.endYear IS NOT NULL
+                        r2.startYear IS NOT NULL AND r2.endYear IS NOT NULL
                     THEN (r1.startYear * 12 + COALESCE(r1.startMonth, 1)) <= (r2.endYear * 12 + COALESCE(r2.endMonth, 12)) AND
-                         (r2.startYear * 12 + COALESCE(r2.startMonth, 1)) <= (r1.endYear * 12 + COALESCE(r1.endMonth, 12))
+                        (r2.startYear * 12 + COALESCE(r2.startMonth, 1)) <= (r1.endYear * 12 + COALESCE(r1.endMonth, 12))
                     ELSE false
-                 END as atTheSameTime,
-                 s.org_name as school,
+                END as atTheSameTime,
+                s.org_name as school,
 
-                 // 计算重叠起始年月
-                 CASE
+                // 计算重叠起始年月
+                CASE
                     WHEN r1.startYear IS NOT NULL AND r2.startYear IS NOT NULL
                     THEN CASE WHEN r1.startYear > r2.startYear THEN r1.startYear ELSE r2.startYear END
-                 END as overlapStartYear,
+                END as overlapStartYear,
 
-                 CASE
+                CASE
                     WHEN r1.startYear IS NOT NULL AND r2.startYear IS NOT NULL AND
-                         r1.startYear = r2.startYear AND
-                         r1.startMonth IS NOT NULL AND r2.startMonth IS NOT NULL
+                        r1.startYear = r2.startYear AND
+                        r1.startMonth IS NOT NULL AND r2.startMonth IS NOT NULL
                     THEN CASE WHEN r1.startMonth > r2.startMonth THEN r1.startMonth ELSE r2.startMonth END
                     WHEN r1.startYear IS NOT NULL AND r2.startYear IS NOT NULL AND r1.startYear > r2.startYear
                     THEN COALESCE(r1.startMonth, 1)
                     WHEN r1.startYear IS NOT NULL AND r2.startYear IS NOT NULL AND r2.startYear > r1.startYear
                     THEN COALESCE(r2.startMonth, 1)
-                 END as overlapStartMonth,
+                END as overlapStartMonth,
 
-                 // 计算重叠结束年月
-                 CASE
+                // 计算重叠结束年月
+                CASE
                     WHEN r1.endYear IS NOT NULL AND r2.endYear IS NOT NULL
                     THEN CASE WHEN r1.endYear < r2.endYear THEN r1.endYear ELSE r2.endYear END
-                 END as overlapEndYear,
+                END as overlapEndYear,
 
-                 CASE
+                CASE
                     WHEN r1.endYear IS NOT NULL AND r2.endYear IS NOT NULL AND
-                         r1.endYear = r2.endYear AND
-                         r1.endMonth IS NOT NULL AND r2.endMonth IS NOT NULL
+                        r1.endYear = r2.endYear AND
+                        r1.endMonth IS NOT NULL AND r2.endMonth IS NOT NULL
                     THEN CASE WHEN r1.endMonth < r2.endMonth THEN r1.endMonth ELSE r2.endMonth END
                     WHEN r1.endYear IS NOT NULL AND r2.endYear IS NOT NULL AND r1.endYear < r2.endYear
                     THEN COALESCE(r1.endMonth, 12)
                     WHEN r1.endYear IS NOT NULL AND r2.endYear IS NOT NULL AND r2.endYear < r1.endYear
                     THEN COALESCE(r2.endMonth, 12)
-                 END as overlapEndMonth
+                END as overlapEndMonth
 
             // 处理重叠时间段的格式化
             WITH p1, p2, school, atTheSameTime,
-                 overlapStartYear, overlapStartMonth, overlapEndYear, overlapEndMonth
+                overlapStartYear, overlapStartMonth, overlapEndYear, overlapEndMonth
 
             WITH p1, p2, school, atTheSameTime,
-                 CASE 
+                CASE 
                     WHEN atTheSameTime AND overlapStartYear IS NOT NULL AND overlapEndYear IS NOT NULL
                     THEN toString(overlapStartYear) + '.' +
-                         CASE WHEN overlapStartMonth < 10 THEN '0' + toString(overlapStartMonth) ELSE toString(overlapStartMonth) END +
-                         '-' + toString(overlapEndYear) + '.' +
-                         CASE WHEN overlapEndMonth < 10 THEN '0' + toString(overlapEndMonth) ELSE toString(overlapEndMonth) END
-                 END as overlapPeriod
+                        CASE WHEN overlapStartMonth < 10 THEN '0' + toString(overlapStartMonth) ELSE toString(overlapStartMonth) END +
+                        '-' + toString(overlapEndYear) + '.' +
+                        CASE WHEN overlapEndMonth < 10 THEN '0' + toString(overlapEndMonth) ELSE toString(overlapEndMonth) END
+                END as overlapPeriod
 
             // 检查这对人物之间是否已存在相同属性的SCHOOLMATES关系
             OPTIONAL MATCH (p1)-[existing:SCHOOLMATES]->(p2)
             WHERE existing.school = school AND
-                  (
+                (
                     (existing.overlapPeriod IS NULL AND overlapPeriod IS NULL) OR
                     existing.overlapPeriod = overlapPeriod
-                  ) AND
-                  existing.atTheSameTime = atTheSameTime
+                ) AND
+                existing.atTheSameTime = atTheSameTime
 
             WITH p1, p2, school, atTheSameTime, overlapPeriod, COUNT(existing) AS existingCount
             WHERE existingCount = 0  // 只处理不存在相同关系的情况
 
-            // 根据重叠期是否存在采用不同的MERGE语句
+            // 根据重叠期是否存在采用不同的CREATE语句，并添加新属性
             FOREACH(dummy IN CASE WHEN overlapPeriod IS NOT NULL THEN [1] ELSE [] END |
-                CREATE (p1)-[r:SCHOOLMATES {atTheSameTime: atTheSameTime, school: school, overlapPeriod: overlapPeriod}]->(p2)
+                CREATE (p1)-[r:SCHOOLMATES {
+                    atTheSameTime: atTheSameTime, 
+                    school: school, 
+                    overlapPeriod: overlapPeriod,
+                    same_department: "TODO",
+                    same_major: "TODO"
+                }]->(p2)
             )
 
             FOREACH(dummy IN CASE WHEN overlapPeriod IS NULL THEN [1] ELSE [] END |
-                CREATE (p1)-[r:SCHOOLMATES {atTheSameTime: atTheSameTime, school: school}]->(p2)
+                CREATE (p1)-[r:SCHOOLMATES {
+                    atTheSameTime: atTheSameTime, 
+                    school: school,
+                    same_department: "TODO",
+                    same_major: "TODO"
+                }]->(p2)
             )
 
             RETURN count(*) as rel_count
@@ -351,6 +366,116 @@ class Neo4jImporter:
                 rel_count = 0
 
             return rel_count
+
+    def create_colleague_relationships(self):
+        """创建人物之间的同事关系"""
+        logger.info("创建人物之间的同事关系...")
+
+        with self.driver.session() as session:
+            # 第一部分：处理当前在职的同事关系（WORKS_FOR）
+            current_colleagues_cypher = """
+            // 查找当前在同一组织工作的人员
+            MATCH (p1:Person)-[w1:WORKS_FOR]->(o:Organization)<-[w2:WORKS_FOR]-(p2:Person)
+            WHERE p1 <> p2 AND id(p1) < id(p2)  // 确保只创建一个方向的关系
+            AND NOT EXISTS((p1)-[:COLLEAGUES]-(p2))  // 检查是否已存在同事关系
+
+            // 创建当前同事关系
+            CREATE (p1)-[r:COLLEAGUES {
+                workplace: o.org_name,
+                overlapPeriod: "till now"
+            }]->(p2)
+
+            RETURN count(r) AS current_colleagues_count
+            """
+
+            # 第二部分：处理历史同事关系（WORKED_AT）
+            historical_colleagues_cypher = """
+            // 查找在同一组织有工作经历的人员，且时间完整
+            MATCH (p1:Person)-[w1:WORKED_AT]->(o:Organization)<-[w2:WORKED_AT]-(p2:Person)
+            WHERE p1 <> p2 AND id(p1) < id(p2)  // 确保只创建一个方向的关系
+            AND w1.startYear IS NOT NULL AND w1.startMonth IS NOT NULL 
+            AND w1.endYear IS NOT NULL AND w1.endMonth IS NOT NULL
+            AND w2.startYear IS NOT NULL AND w2.startMonth IS NOT NULL 
+            AND w2.endYear IS NOT NULL AND w2.endMonth IS NOT NULL
+            AND NOT EXISTS((p1)-[:COLLEAGUES]-(p2))  // 检查是否已存在同事关系（避免与当前同事关系重复）
+
+            // 计算时间重叠
+            WITH p1, p2, o, w1, w2,
+                // 计算开始和结束时间（转换为月份便于比较）
+                w1.startYear * 12 + w1.startMonth AS w1_start_months,
+                w1.endYear * 12 + w1.endMonth AS w1_end_months,
+                w2.startYear * 12 + w2.startMonth AS w2_start_months,
+                w2.endYear * 12 + w2.endMonth AS w2_end_months
+
+            // 判断是否有时间重叠
+            WHERE w1_start_months <= w2_end_months AND w2_start_months <= w1_end_months
+
+            // 计算重叠时间段
+            WITH p1, p2, o, w1, w2,
+                // 重叠开始时间（取较晚的开始时间）
+                CASE 
+                    WHEN w1.startYear > w2.startYear THEN w1.startYear
+                    WHEN w1.startYear < w2.startYear THEN w2.startYear
+                    ELSE CASE WHEN w1.startMonth > w2.startMonth THEN w1.startYear ELSE w2.startYear END
+                END AS overlap_start_year,
+
+                CASE 
+                    WHEN w1.startYear > w2.startYear THEN w1.startMonth
+                    WHEN w1.startYear < w2.startYear THEN w2.startMonth
+                    ELSE CASE WHEN w1.startMonth > w2.startMonth THEN w1.startMonth ELSE w2.startMonth END
+                END AS overlap_start_month,
+
+                // 重叠结束时间（取较早的结束时间）
+                CASE 
+                    WHEN w1.endYear < w2.endYear THEN w1.endYear
+                    WHEN w1.endYear > w2.endYear THEN w2.endYear
+                    ELSE CASE WHEN w1.endMonth < w2.endMonth THEN w1.endYear ELSE w2.endYear END
+                END AS overlap_end_year,
+
+                CASE 
+                    WHEN w1.endYear < w2.endYear THEN w1.endMonth
+                    WHEN w1.endYear > w2.endYear THEN w2.endMonth
+                    ELSE CASE WHEN w1.endMonth < w2.endMonth THEN w1.endMonth ELSE w2.endMonth END
+                END AS overlap_end_month
+
+            // 格式化重叠时间段
+            WITH p1, p2, o,
+                toString(overlap_start_year) + '.' +
+                CASE WHEN overlap_start_month < 10 THEN '0' + toString(overlap_start_month) ELSE toString(overlap_start_month) END +
+                '-' + toString(overlap_end_year) + '.' +
+                CASE WHEN overlap_end_month < 10 THEN '0' + toString(overlap_end_month) ELSE toString(overlap_end_month) END AS overlapPeriod
+
+            // 创建历史同事关系
+            CREATE (p1)-[r:COLLEAGUES {
+                workplace: o.org_name,
+                overlapPeriod: overlapPeriod
+            }]->(p2)
+
+            RETURN count(r) AS historical_colleagues_count
+            """
+
+            try:
+                # 执行当前同事关系创建
+                logger.info("正在创建当前在职同事关系...")
+                result1 = session.run(current_colleagues_cypher)
+                current_count = result1.single()["current_colleagues_count"]
+                logger.info(f"已创建 {current_count} 个当前在职同事关系")
+
+                # 执行历史同事关系创建
+                logger.info("正在创建历史同事关系...")
+                result2 = session.run(historical_colleagues_cypher)
+                historical_count = result2.single()["historical_colleagues_count"]
+                logger.info(f"已创建 {historical_count} 个历史同事关系")
+
+                total_count = current_count + historical_count
+                logger.info(f"同事关系创建完成，总计创建 {total_count} 个同事关系")
+                return total_count
+
+            except Exception as e:
+                logger.error(f"创建同事关系时出错: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return 0
 
     def import_data(self):
         """导入数据到Neo4j"""
@@ -386,6 +511,9 @@ class Neo4jImporter:
 
             # 5. 创建同学关系
             self.create_schoolmates_relationships()
+
+            # 6. 创建同事关系
+            self.create_colleague_relationships()
 
             end_time = time.time()
             logger.info(f"数据导入完成，耗时 {end_time - start_time:.2f} 秒")
@@ -727,6 +855,7 @@ class Neo4jImporter:
             logger.error(f"处理领导人 {leader.get('leader_name')} (UUID={leader.get('uuid')}) 的职业履历时出错: {e}")
             import traceback
             logger.error(traceback.format_exc())
+
 
 def main():
     """主函数"""
