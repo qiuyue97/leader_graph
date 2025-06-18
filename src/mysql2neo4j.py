@@ -104,17 +104,20 @@ class MySQLClient:
             return []
 
     def get_all_leaders(self):
-        """获取所有领导人记录"""
+        """获取所有领导人记录，包含当前任职地区信息"""
         try:
             with self.connection.cursor() as cursor:
                 sql = """
-                SELECT uuid, org_info_id, org_info_uuid, org_name, leader_name, 
-                       leader_position, leader_profile, gender, 
-                       nationality, ethnic_group, birth_place, birth_date, 
-                       alma_mater, degree, edu_level, political_status, 
-                       professional_title, image_url, career_history_structured
-                FROM c_org_leader_info 
-                WHERE is_deleted = 0
+                SELECT 
+                    l.uuid, l.org_info_id, l.org_info_uuid, l.org_name, l.leader_name, 
+                    l.leader_position, l.leader_profile, l.gender, 
+                    l.nationality, l.ethnic_group, l.birth_place, l.birth_date, 
+                    l.alma_mater, l.degree, l.edu_level, l.political_status, 
+                    l.professional_title, l.image_url, l.career_history_structured,
+                    o.org_region as current_region
+                FROM c_org_leader_info l
+                LEFT JOIN c_org_info o ON o.uuid COLLATE utf8mb4_unicode_ci = SUBSTRING_INDEX(l.org_info_uuid, ',', 1) COLLATE utf8mb4_unicode_ci
+                WHERE l.is_deleted = 0
                 """
                 cursor.execute(sql)
                 results = cursor.fetchall()
@@ -615,7 +618,7 @@ class Neo4jImporter:
         logger.info(f"领导人数据导入完成，共导入 {total} 条记录")
 
     def create_person_node(self, session, leader):
-        """创建人物节点"""
+        """创建人物节点，包含当前任职地区信息"""
         cypher = """
         MERGE (p:Person {uuid: $uuid})
         ON CREATE SET 
@@ -632,7 +635,8 @@ class Neo4jImporter:
           p.degree = $degree,
           p.edu_level = $edu_level,
           p.professional_title = $professional_title,
-          p.image_url = $image_url
+          p.image_url = $image_url,
+          p.current_region = $current_region
         """
 
         params = {
@@ -650,7 +654,8 @@ class Neo4jImporter:
             'degree': leader.get('degree', ''),
             'edu_level': leader.get('edu_level', ''),
             'professional_title': leader.get('professional_title', ''),
-            'image_url': leader.get('image_url', '')
+            'image_url': leader.get('image_url', ''),
+            'current_region': leader.get('current_region', '')
         }
 
         session.run(cypher, params)
