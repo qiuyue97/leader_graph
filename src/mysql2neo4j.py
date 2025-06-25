@@ -385,7 +385,11 @@ class Neo4jImporter:
             // 创建当前同事关系
             CREATE (p1)-[r:COLLEAGUES {
                 workplace: o.org_name,
-                overlapPeriod: "till now"
+                overlapPeriod: "till now",
+                person1_uuid: p1.uuid,
+                person1_position: w1.position,
+                person2_uuid: p2.uuid,
+                person2_position: w2.position
             }]->(p2)
 
             RETURN count(r) AS current_colleagues_count
@@ -442,7 +446,7 @@ class Neo4jImporter:
                 END AS overlap_end_month
 
             // 格式化重叠时间段
-            WITH p1, p2, o,
+            WITH p1, p2, o, w1, w2,
                 toString(overlap_start_year) + '.' +
                 CASE WHEN overlap_start_month < 10 THEN '0' + toString(overlap_start_month) ELSE toString(overlap_start_month) END +
                 '-' + toString(overlap_end_year) + '.' +
@@ -451,7 +455,11 @@ class Neo4jImporter:
             // 创建历史同事关系
             CREATE (p1)-[r:COLLEAGUES {
                 workplace: o.org_name,
-                overlapPeriod: overlapPeriod
+                overlapPeriod: overlapPeriod,
+                person1_uuid: p1.uuid,
+                person1_position: w1.position,
+                person2_uuid: p2.uuid,
+                person2_position: w2.position
             }]->(p2)
 
             RETURN count(r) AS historical_colleagues_count
